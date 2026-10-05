@@ -66,12 +66,12 @@
       what: 'A downloaded installer or archive. Once the app is installed or the files extracted, it is usually not needed.', after: 'It moves to the Trash. You can put it back until you empty the Trash.', lose: 'Only if you still need this file. Check before cleaning.' }),
   ];
   const cats = [
-    ['build', 'Build caches', 'Files that Next.js, Turborepo and other tools generate while you build or run a project. They are rebuilt automatically.'],
-    ['deps', 'node_modules', 'Installed packages for each project. Your lockfile lets you reinstall the exact same versions in a minute or two.'],
+    ['build', 'Build caches', 'Files that build tools create while you work: Next.js, Rust, Gradle, Swift, Flutter, Python test caches and more. They are rebuilt automatically.'],
+    ['deps', 'Dependencies', 'Packages installed inside each project: node_modules, Python virtual environments, CocoaPods, Composer and more. They can be installed again from your project files.'],
     ['leftovers', 'Leftover copies', 'Extra working copies of projects: AI-agent worktrees and duplicated project folders.'],
-    ['pkg', 'Developer caches', 'Download caches for npm, pnpm, Bun, Homebrew, Playwright and similar tools. They refill only with what you use.'],
-    ['apps', 'App caches & logs', 'Temporary files that apps keep in your Library. Apps recreate what they need. System caches from Apple are never touched.'],
-    ['files', 'Downloads & Trash', 'Large files in Downloads and what is already in your Trash. Nothing here is selected for you.'],
+    ['pkg', 'Developer caches', 'Download caches for npm, pip, Cargo, Gradle, Maven, Homebrew, Xcode and similar tools. They refill only with what you use.'],
+    ['apps', 'App caches & logs', 'Temporary files that apps keep in your Library. Only caches known to be safe are selected for you. Apple system caches are never touched.'],
+    ['files', 'Downloads, backups & Trash', 'Large files in Downloads, old iPhone and iPad backups, and what is already in your Trash. Nothing here is selected for you.'],
   ].map(([id, name, blurb]) => {
     const l = items.filter((i) => i.category === id);
     return { id, name, blurb, count: l.length, size: l.reduce((a, i) => a + i.size, 0) };

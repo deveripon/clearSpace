@@ -199,8 +199,11 @@ async function diskInfo(p = HOME) {
 const IGNORE_FOR_ACTIVITY = new Set([
   'node_modules', '.git', '.next', '.turbo', '.nuxt', '.svelte-kit', '.parcel-cache',
   '.vite', '.cache', 'dist', 'build', 'out', 'coverage', '.vercel', '.expo', '.claude', '.DS_Store',
+  // output and installed packages of other stacks: tools write here, people do not
+  'target', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox', 'Pods', 'vendor',
+  '.gradle', '.build', '.dart_tool', '_build', 'deps', 'cmake-build-debug', 'cmake-build-release', '.zig-cache', 'zig-cache',
 ]);
-async function lastActivity(dir, maxDepth = 3, budget = { n: 4000 }) {
+async function lastActivity(dir, maxDepth = 7, budget = { n: 8000 }) {
   let newest = 0;
   async function walk(d, depth) {
     if (budget.n <= 0) return;
@@ -224,6 +227,26 @@ async function lastActivity(dir, maxDepth = 3, budget = { n: 4000 }) {
   const out = await git(dir, ['log', '-1', '--format=%ct'], 8000);
   const ct = Number((out || '').trim()) * 1000;
   if (ct > newest) newest = ct;
+  // So do uncommitted changes anywhere in the project, however deep (src/main/java/...).
+  const top = await git(dir, ['rev-parse', '--show-toplevel'], 8000);
+  // Limited to this folder (pathspec "."), so changes elsewhere in a big repository cannot crowd it out.
+  const st = top ? await git(dir, ['status', '--porcelain', '-z', '--untracked-files=all', '--', '.'], 15000) : null;
+  if (top && st) {
+    const root = top.trim();
+    // -z: "XY path\0", and renames/copies add the old path as the next field. Paths are exact (no quoting).
+    const tok = st.split('\0');
+    const rels = [];
+    for (let i = 0; i < tok.length && rels.length < 400; i++) {
+      const t = tok[i];
+      if (t.length < 4) continue;
+      rels.push(t.slice(3));
+      if (t[0] === 'R' || t[0] === 'C') i++; // skip the old name
+    }
+    const changed = rels.map((rel) => path.join(root, rel)).filter((p) => p === dir || p.startsWith(dir + '/'));
+    for (const p of changed) {
+      try { const m = (await fsp.lstat(p)).mtimeMs; if (m > newest) newest = m; } catch {}
+    }
+  }
   return newest || null;
 }
 

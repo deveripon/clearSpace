@@ -11,12 +11,12 @@ const CATEGORIES = [
   {
     id: 'build',
     name: 'Build caches',
-    blurb: 'Files that Next.js, Turborepo and other tools generate while you build or run a project. They are rebuilt automatically.',
+    blurb: 'Files that build tools create while you work: Next.js, Rust, Gradle, Swift, Flutter, Python test caches and more. They are rebuilt automatically.',
   },
   {
     id: 'deps',
-    name: 'node_modules',
-    blurb: 'Installed packages for each project. Your lockfile lets you reinstall the exact same versions in a minute or two.',
+    name: 'Dependencies',
+    blurb: 'Packages installed inside each project: node_modules, Python virtual environments, CocoaPods, Composer and more. They can be installed again from your project files.',
   },
   {
     id: 'leftovers',
@@ -26,7 +26,7 @@ const CATEGORIES = [
   {
     id: 'pkg',
     name: 'Developer caches',
-    blurb: 'Download caches for npm, pnpm, Bun, Homebrew, Playwright and similar tools. They refill only with what you use.',
+    blurb: 'Download caches for npm, pip, Cargo, Gradle, Maven, Homebrew, Xcode and similar tools. They refill only with what you use.',
   },
   {
     id: 'apps',
@@ -35,56 +35,114 @@ const CATEGORIES = [
   },
   {
     id: 'files',
-    name: 'Downloads & Trash',
-    blurb: 'Large files in Downloads and what is already in your Trash. Nothing here is selected for you.',
+    name: 'Downloads, backups & Trash',
+    blurb: 'Large files in Downloads, old iPhone and iPad backups, and what is already in your Trash. Nothing here is selected for you.',
   },
 ];
 
-/** Generated folders inside a project. `marker` = file that must exist next to it so we know it is really a project. */
-const BUILD_DIRS = {
-  '.next': {
-    label: 'Next.js build cache',
-    markers: ['package.json'],
+/**
+ * Folders inside a project that Clearspace may offer to remove. Scan and clean both use this list,
+ * so a folder is only ever removed if it matches one entry here at both times.
+ *
+ *   name     folder name
+ *   markers  at least one of these files must sit next to the folder (proves it is a real project)
+ *   inside   if set, at least one of these must exist inside the folder (proves it is really output)
+ *   insideAnyChild  a file that one of its child folders must contain
+ *   heavy    slow to rebuild: recommended only when the project has not been used for a while
+ *   generic  a name people also use for their own folders (build, vendor, deps...): only "Safe"
+ *            when git ignores the folder; otherwise "Check first"
+ *   nestedGitOkUnder / nestedGitDepth  where the tool itself keeps git clones / how deep to look for repos
+ *   locks    (dependencies) [file, install command] pairs; the first one present is used
+ *   exactLocks  lockfiles that pin exact versions
+ *   knownTop    (generic build folders) what the tool writes at the top level; anything else => "Check first"
+ *   noAutoSelect (dependencies) never preselected: the tool keeps no per-package record to prove nothing was edited
+ */
+const PY = ['pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Pipfile', 'tox.ini'];
+const GRADLE = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
+const COVERAGE_FILES = ['lcov.info', 'coverage-final.json', 'coverage-summary.json', 'clover.xml', 'lcov-report', 'cobertura-coverage.xml'];
+const rebuilt = (tool) => `The next ${tool} run is slower once while it rebuilds.`;
+
+const PROJECT_DIRS = [
+  // ---- JavaScript / TypeScript
+  { id: 'next', name: '.next', category: 'build', label: 'Next.js build cache', markers: ['package.json'],
     what: 'Compiled pages and the development cache that Next.js writes while you run `next dev` or `next build`.',
-    after: 'The next `dev` or `build` run is slower once while Next.js rebuilds it.',
-  },
-  '.turbo': {
-    label: 'Turborepo cache',
-    markers: ['package.json', 'turbo.json'],
+    after: 'The next `dev` or `build` run is slower once while Next.js rebuilds it.' },
+  { id: 'turbo', name: '.turbo', category: 'build', label: 'Turborepo cache', markers: ['package.json', 'turbo.json'],
     what: 'Saved results of earlier builds, lints and tests so Turborepo can skip repeated work.',
-    after: 'The next `turbo` run does the full work once, then the cache refills.',
-  },
-  '.nuxt': {
-    label: 'Nuxt build output',
-    markers: ['package.json'],
-    what: 'Generated files from Nuxt development and builds.',
-    after: 'Nuxt regenerates them on the next run.',
-  },
-  '.svelte-kit': {
-    label: 'SvelteKit build output',
-    markers: ['package.json'],
-    what: 'Generated files from SvelteKit development and builds.',
-    after: 'SvelteKit regenerates them on the next run.',
-  },
-  '.parcel-cache': {
-    label: 'Parcel cache',
-    markers: ['package.json'],
-    what: 'Parcel bundler cache.',
-    after: 'The next build is slower once.',
-  },
-  '.angular': {
-    label: 'Angular cache',
-    markers: ['package.json', 'angular.json'],
-    what: 'Angular CLI build cache.',
-    after: 'The next build is slower once.',
-  },
-  coverage: {
-    label: 'Test coverage report',
-    markers: ['package.json'],
-    what: 'HTML and JSON reports produced by a test coverage run.',
-    after: 'They come back the next time you run tests with coverage.',
-  },
-};
+    after: 'The next `turbo` run does the full work once, then the cache refills.' },
+  { id: 'nuxt', name: '.nuxt', category: 'build', label: 'Nuxt build output', markers: ['package.json'],
+    what: 'Generated files from Nuxt development and builds.', after: 'Nuxt regenerates them on the next run.' },
+  { id: 'svelte-kit', name: '.svelte-kit', category: 'build', label: 'SvelteKit build output', markers: ['package.json'],
+    what: 'Generated files from SvelteKit development and builds.', after: 'SvelteKit regenerates them on the next run.' },
+  { id: 'parcel', name: '.parcel-cache', category: 'build', label: 'Parcel cache', markers: ['package.json'],
+    what: 'Parcel bundler cache.', after: rebuilt('build') },
+  { id: 'angular', name: '.angular', category: 'build', label: 'Angular cache', markers: ['package.json', 'angular.json'],
+    what: 'Angular CLI build cache.', after: rebuilt('build') },
+  { id: 'coverage', name: 'coverage', category: 'build', label: 'Test coverage report', markers: ['package.json', ...PY], inside: COVERAGE_FILES,
+    what: 'HTML and JSON reports produced by a test coverage run.', after: 'They come back the next time you run tests with coverage.' },
+  // ---- Rust, Java, Android, Kotlin
+  { id: 'rust-target', name: 'target', category: 'build', label: 'Rust build output', markers: ['Cargo.toml'], inside: ['CACHEDIR.TAG'], heavy: true, nestedGitDepth: 3,
+    what: 'Compiled code and build artifacts Cargo writes while you build, test or run this project.',
+    after: 'The next `cargo build` compiles everything again, which can take a few minutes.' },
+  { id: 'maven-target', name: 'target', category: 'build', label: 'Maven build output', markers: ['pom.xml'], inside: ['maven-status', 'maven-archiver'], heavy: true, generic: true,
+    knownTop: ['classes', 'test-classes', 'generated-sources', 'generated-test-sources', 'maven-status', 'maven-archiver', 'surefire-reports', 'failsafe-reports',
+      'antrun', 'dependency', 'jacoco.exec', 'checkstyle-result.xml', 'checkstyle-cachefile', 'checkstyle-checker.xml', /\.(jar|war|ear|pom)$/, /^jacoco/],
+    what: 'Compiled classes, test reports and packaged files that Maven writes during a build.',
+    after: 'The next `mvn` build compiles everything again.' },
+  { id: 'gradle-build', name: 'build', category: 'build', label: 'Gradle build output', markers: GRADLE, inside: ['tmp', 'intermediates', 'kotlin', 'generated'], heavy: true, generic: true,
+    knownTop: ['tmp', 'intermediates', 'kotlin', 'generated', 'classes', 'libs', 'reports', 'outputs', 'resources', 'test-results', 'jacoco', 'distributions',
+      'scripts-tmp', 'kotlinToolingMetadata', '.transforms', 'snapshot', 'javadoc', 'native-libs', 'publications', 'xcode-frameworks', 'compose-cache'],
+    what: 'Compiled code and build artifacts Gradle writes for this project (Android, Kotlin or Java).',
+    after: 'The next Gradle build compiles everything again.' },
+  { id: 'gradle-project', name: '.gradle', category: 'build', label: 'Gradle project cache', markers: GRADLE, inside: ['buildOutputCleanup', 'file-system.probe', 'vcs-1', 'checksums', 'configuration-cache', 'noVersion'],
+    what: 'Gradle\'s per-project cache of build state and file hashes.', after: rebuilt('Gradle') },
+  // ---- Apple
+  { id: 'swiftpm', name: '.build', category: 'build', label: 'Swift package build', markers: ['Package.swift'], inside: ['workspace-state.json'], heavy: true, nestedGitOkUnder: ['checkouts', 'repositories'],
+    what: 'Compiled code and checked-out package dependencies from Swift Package Manager.',
+    after: 'The next `swift build` fetches and compiles dependencies again.' },
+  // ---- Flutter / Dart
+  { id: 'dart-tool', name: '.dart_tool', category: 'build', label: 'Dart tool cache', markers: ['pubspec.yaml'], inside: ['package_config.json'],
+    what: 'Package configuration and build caches the Dart and Flutter tools create.',
+    after: 'Run `flutter pub get` (or `dart pub get`) before working on it again.' },
+  { id: 'flutter-build', name: 'build', category: 'build', label: 'Flutter build output', markers: ['pubspec.yaml'], inside: ['.last_build_id', 'flutter_assets', 'native_assets'], heavy: true, generic: true,
+    knownTop: ['.last_build_id', 'flutter_assets', 'native_assets', 'app', 'ios', 'macos', 'web', 'windows', 'linux', 'android', 'tmp', 'intermediates', 'kotlin',
+      'generated', 'outputs', 'reports', 'flutter_build', '.cxx', 'unit_test_assets', 'test_cache'],
+    what: 'Apps and intermediate files Flutter builds for each platform.',
+    after: 'The next `flutter run` or `flutter build` builds everything again.' },
+  // ---- Python
+  { id: 'pytest-cache', name: '.pytest_cache', category: 'build', label: 'pytest cache', markers: PY, inside: ['CACHEDIR.TAG'],
+    what: 'Results pytest remembers between runs, such as which tests failed last time.', after: 'pytest starts with an empty cache next time.' },
+  { id: 'mypy-cache', name: '.mypy_cache', category: 'build', label: 'mypy cache', markers: PY, inside: ['CACHEDIR.TAG'],
+    what: 'Type-checking results mypy saves to run faster.', after: rebuilt('mypy') },
+  { id: 'ruff-cache', name: '.ruff_cache', category: 'build', label: 'Ruff cache', markers: PY, inside: ['CACHEDIR.TAG'],
+    what: 'Lint results Ruff saves to run faster.', after: 'Ruff rebuilds it on the next run.' },
+  { id: 'tox', name: '.tox', category: 'build', label: 'tox test environments', markers: ['tox.ini', 'pyproject.toml', 'setup.cfg'], insideAnyChild: 'pyvenv.cfg',
+    what: 'Separate Python environments tox creates to run your tests.', after: 'tox creates them again on the next run, which takes a while.' },
+  // ---- Elixir, C/C++, Zig
+  { id: 'mix-build', name: '_build', category: 'build', label: 'Elixir build output', markers: ['mix.exs'], inside: ['dev/lib', 'test/lib', 'prod/lib'], generic: true, knownTop: ['dev', 'test', 'prod', 'staging'],
+    what: 'Compiled code from `mix compile`.', after: rebuilt('mix') },
+  { id: 'cmake-debug', name: 'cmake-build-debug', category: 'build', label: 'CMake build folder', markers: ['CMakeLists.txt'], inside: ['CMakeCache.txt'], heavy: true,
+    what: 'A CMake build folder (CLion creates these).', after: 'CMake configures and compiles again on the next build.' },
+  { id: 'cmake-release', name: 'cmake-build-release', category: 'build', label: 'CMake build folder', markers: ['CMakeLists.txt'], inside: ['CMakeCache.txt'], heavy: true,
+    what: 'A CMake build folder (CLion creates these).', after: 'CMake configures and compiles again on the next build.' },
+
+  // ---- Dependencies installed inside a project
+  { id: 'node-modules', name: 'node_modules', category: 'deps', label: 'node_modules', markers: ['package.json'] },
+  { id: 'venv', name: '.venv', category: 'deps', label: 'Python virtual environment', markers: [...PY, 'uv.lock', 'poetry.lock'], inside: ['pyvenv.cfg'],
+    locks: [['uv.lock', 'uv sync'], ['poetry.lock', 'poetry install'], ['Pipfile.lock', 'pipenv install'], ['requirements.txt', 'pip install -r requirements.txt']], exactLocks: ['uv.lock', 'poetry.lock', 'Pipfile.lock'] },
+  { id: 'venv-plain', name: 'venv', category: 'deps', label: 'Python virtual environment', markers: [...PY, 'uv.lock', 'poetry.lock'], inside: ['pyvenv.cfg'],
+    locks: [['uv.lock', 'uv sync'], ['poetry.lock', 'poetry install'], ['Pipfile.lock', 'pipenv install'], ['requirements.txt', 'pip install -r requirements.txt']], exactLocks: ['uv.lock', 'poetry.lock', 'Pipfile.lock'] },
+  { id: 'pods', name: 'Pods', category: 'deps', label: 'CocoaPods', markers: ['Podfile'], inside: ['Manifest.lock'],
+    locks: [['Podfile.lock', 'pod install']], exactLocks: ['Podfile.lock'], noAutoSelect: true },
+  { id: 'composer', name: 'vendor', category: 'deps', label: 'Composer packages', markers: ['composer.json'], inside: ['composer/installed.json'], generic: true,
+    locks: [['composer.lock', 'composer install']], exactLocks: ['composer.lock'], noAutoSelect: true },
+  { id: 'mix-deps', name: 'deps', category: 'deps', label: 'Mix dependencies', markers: ['mix.exs'], generic: true,
+    locks: [['mix.lock', 'mix deps.get']], exactLocks: ['mix.lock'], noAutoSelect: true },
+];
+const PROJECT_DIR_NAMES = new Set(PROJECT_DIRS.map((d) => d.name));
+const specById = (id) => PROJECT_DIRS.find((d) => d.id === id) || null;
+/** Entries whose name and markers fit a folder, given the names of the files next to it. */
+const specCandidates = (name, siblings) => PROJECT_DIRS.filter((d) => d.name === name && d.markers.some((m) => siblings.has(m)));
 
 const H = '~';
 /** Known developer caches (absolute paths are resolved at scan time). */
@@ -166,6 +224,42 @@ const DEV_CACHES = [
     what: 'Downloaded Android/Java dependencies and build caches.',
     after: 'The next Gradle build downloads dependencies again.',
   },
+  {
+    key: 'gradle-wrapper', path: `${H}/.gradle/wrapper/dists`, name: 'Gradle versions', action: 'delete',
+    what: 'Full copies of Gradle that the Gradle wrapper downloaded, often one per version your projects used.',
+    after: 'A project downloads its Gradle version again the next time you build it.',
+  },
+  {
+    key: 'cargo-registry', path: `${H}/.cargo/registry/cache`, name: 'Cargo downloaded crates', action: 'delete',
+    what: 'Rust packages (crates) Cargo downloaded.',
+    after: 'Cargo downloads crates again when a project needs them.',
+  },
+  {
+    key: 'cargo-src', path: `${H}/.cargo/registry/src`, name: 'Cargo unpacked crates', action: 'delete',
+    what: 'Unpacked source code of downloaded Rust crates.',
+    after: 'Cargo unpacks them again on the next build.',
+  },
+  {
+    key: 'cargo-git', path: `${H}/.cargo/git/checkouts`, name: 'Cargo git dependencies', action: 'delete',
+    what: 'Checkouts of Rust dependencies that come from git repositories.',
+    after: 'Cargo fetches them again on the next build.',
+  },
+  {
+    key: 'maven', path: `${H}/.m2/repository`, name: 'Maven repository', action: 'empty', risk: 'check',
+    what: 'Java libraries Maven downloaded, plus anything you installed yourself with `mvn install`.',
+    after: 'Maven downloads libraries again on the next build.',
+    note: 'Anything you installed by hand with `mvn install` or `install:install-file` (for example a vendor SDK or a database driver jar) cannot be downloaded again. Leave this alone unless you know everything here comes from a public repository.',
+  },
+  {
+    key: 'composer', path: `${H}/Library/Caches/composer`, name: 'Composer download cache', action: 'empty',
+    what: 'PHP packages downloaded by Composer.',
+    after: 'Composer downloads packages again when a project needs them.',
+  },
+  {
+    key: 'xcode-device-support', path: `${H}/Library/Developer/Xcode/iOS DeviceSupport`, name: 'Xcode device support files', action: 'empty', risk: 'check',
+    what: 'Debug symbols Xcode copies from each iPhone or iPad you connect, one folder per iOS version.',
+    after: 'Xcode copies them again the next time you connect a device for debugging, which takes a few minutes.',
+  },
 ];
 
 const APP_CACHE_TEXT = {
@@ -201,10 +295,10 @@ const APP_CACHE_SKIP = [
   /^com\.apple\./i, /^CloudKit$/i, /^FamilyCircle$/i, /^GeoServices$/i, /^GameKit$/i,
   /^com\.crashlytics/i, /^Metadata$/i, /^PassKit$/i, /^AMSDataMigratorTool$/i,
   /^Yarn$/i, /^Homebrew$/i, /^pip$/i, /^turbo$/i, /^electron$/i, /^electron-builder$/i,
-  /^ms-playwright$/i, /^Cypress$/i, /^CocoaPods$/i,
+  /^ms-playwright$/i, /^Cypress$/i, /^CocoaPods$/i, /^composer$/i,
   /clearspace/i,
 ];
 
 const INSTALLER_EXT = /\.(dmg|pkg|iso|xip|zip|tar|tgz|gz|rar|7z)$/i;
 
-module.exports = { CATEGORIES, BUILD_DIRS, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT, SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN };
+module.exports = { CATEGORIES, PROJECT_DIRS, PROJECT_DIR_NAMES, COVERAGE_FILES, specById, specCandidates, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT, SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN };

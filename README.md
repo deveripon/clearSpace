@@ -7,7 +7,8 @@
 
 <p align="center">
   Free up disk space on your Mac without the fear of deleting something you need.<br>
-  Clearspace finds build caches, <code>node_modules</code>, leftover AI-agent worktrees and app caches,<br>
+  Clearspace finds build caches and installed packages from any stack, app caches, old iPhone backups,<br>
+  big downloads and leftover AI-agent worktrees,<br>
   explains every item in plain language, and cleans only what you approve.
 </p>
 
@@ -58,12 +59,12 @@ On first launch, open **Settings** and check the project folders. By default Cle
 
 | Category | Examples | Selected for you |
 |---|---|---|
-| **Build caches** | `.next`, `.turbo`, `.nuxt`, `.svelte-kit`, `.parcel-cache`, `.angular`, coverage reports | Yes |
-| **node_modules** | Grouped per project or monorepo | Only projects unused for 14+ days (adjustable) |
+| **Build caches** | JavaScript: `.next`, `.turbo`, `.nuxt`, `.svelte-kit`, `.parcel-cache`, `.angular`, coverage reports. Rust and Maven `target`, Gradle `build` and `.gradle`, Swift `.build`, Flutter `build` and `.dart_tool`, Python `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, Elixir `_build`, CMake and Zig build folders | Yes. Slow-to-rebuild output (Rust, Maven, Gradle, Swift, Flutter, CMake) only for projects unused for 14+ days |
+| **Dependencies** | `node_modules` (grouped per project or monorepo), Python `.venv`/`venv`, CocoaPods `Pods`, Composer `vendor`, Mix `deps` | Only projects unused for 14+ days (adjustable) that have a lockfile |
 | **Leftover copies** | AI-agent worktrees in `.claude/worktrees`, `.codex/worktrees` and `.conductor/worktrees`; duplicate "project copy" folders | Only clean worktrees with nothing unpushed and no recent activity |
-| **Developer caches** | npm, Bun, Yarn, Homebrew, pip, Electron, Xcode DerivedData; `pnpm store prune` | Yes, except Playwright, Cypress, `~/.cache` and pnpm prune |
+| **Developer caches** | npm, Bun, Yarn, Homebrew, pip, Composer, Cargo, Gradle, Electron, CocoaPods, Xcode DerivedData; `pnpm store prune` | Yes, except Playwright, Cypress, Maven, Xcode device support, `~/.cache` and pnpm prune |
 | **App caches & logs** | Chrome, VS Code, Slack, Discord, Cursor and other known-safe caches; `~/Library/Logs` | Only caches on the known-safe list |
-| **Downloads & Trash** | Large files in Downloads; your Trash | Never |
+| **Downloads, backups & Trash** | Large files in Downloads; iPhone and iPad backups made by Finder (moved to the Trash); your Trash | Never |
 
 ## How it keeps your work safe
 
@@ -93,7 +94,8 @@ Clearspace was built for one rule: **never delete anything you need.** Every pro
 - Worktrees are removed with `git worktree remove`, never `--force`. Branches stay in your repo.
 - Commits that only a worktree's own history knows about are first saved as `refs/clearspace-backup/<worktree>/<sha>`, so nothing becomes unreachable.
 - Worktrees with git activity in the last 24 hours are not preselected, since an agent may still be working there.
-- `node_modules` and build folders that git tracks are never offered. If git can't tell, they are treated as tracked.
+- A project folder is only offered when the files that prove what it is sit next to it (for example `Cargo.toml` beside `target`, `package.json` beside `node_modules`) and, for common names like `target`, `build` or `vendor`, when the folder's contents match too (`CACHEDIR.TAG`, `pyvenv.cfg`, `Manifest.lock`...). The same check runs again right before cleaning.
+- Dependency and build folders that git tracks are never offered. If git can't tell, they are treated as tracked.
 - Folders that contain a git repository (for example a cloned package) are locked.
 - Git runs with hooks and `core.fsmonitor` disabled and never takes index locks.
 

@@ -48,5 +48,89 @@ git worktree add -q .claude/worktrees/build-notes -b build-notes; mkdir -p .clau
 # tracked file hidden with skip-worktree
 git worktree add -q .claude/worktrees/skipwt -b skipwt; (cd .claude/worktrees/skipwt && echo 'token=SECRET' > package.json && git update-index --skip-worktree package.json)
 git config status.showUntrackedFiles no
+# ---- other stacks
+S=$P/stacks; mkdir -p $S
+TAG='Signature: 8a477f597d28d172789f06886806bc55'
+mkdir -p $S/rust-cli/src; echo '[package]' > $S/rust-cli/Cargo.toml; echo 'fn main(){}' > $S/rust-cli/src/main.rs; mk $S/rust-cli/target/debug/app.bin 3; echo "$TAG" > $S/rust-cli/target/CACHEDIR.TAG
+old 40 $S/rust-cli/Cargo.toml $S/rust-cli/src/main.rs
+mkdir -p $S/rust-live/src; echo '[package]' > $S/rust-live/Cargo.toml; echo 'fn main(){}' > $S/rust-live/src/main.rs; mk $S/rust-live/target/debug/app.bin 2; echo "$TAG" > $S/rust-live/target/CACHEDIR.TAG
+mkdir -p $S/rust-odd; echo '[package]' > $S/rust-odd/Cargo.toml; mk $S/rust-odd/target/mine.bin 2          # no CACHEDIR.TAG: not offered
+mk $S/photos/target/pic.bin 2                                                                              # no Cargo.toml: not offered
+SP=lib/python3.12/site-packages
+mkdir -p $S/py-app; echo '[project]' > $S/py-app/pyproject.toml; touch $S/py-app/uv.lock; mk $S/py-app/.venv/$SP/requests/x.bin 2; echo 'home = /usr/bin' > $S/py-app/.venv/pyvenv.cfg
+mkdir -p $S/py-app/.venv/$SP/requests-2.32.dist-info; printf 'requests/x.bin,sha256=x,2097152\nrequests-2.32.dist-info/RECORD,,\n' > $S/py-app/.venv/$SP/requests-2.32.dist-info/RECORD
+mk $S/py-app/.pytest_cache/v/x.bin 1; echo "$TAG" > $S/py-app/.pytest_cache/CACHEDIR.TAG; old 30 $S/py-app/pyproject.toml $S/py-app/uv.lock
+mkdir -p $S/py-req; echo 'requests' > $S/py-req/requirements.txt; mk $S/py-req/venv/$SP/req/y.bin 2; echo 'home = /usr/bin' > $S/py-req/venv/pyvenv.cfg; old 30 $S/py-req/requirements.txt
+mkdir -p $S/py-req/venv/$SP/req-1.0.dist-info; printf 'req/y.bin,sha256=x,2097152\n' > $S/py-req/venv/$SP/req-1.0.dist-info/RECORD
+# a package file patched after install => Check first, named
+mkdir -p $S/py-patched; echo '[project]' > $S/py-patched/pyproject.toml; touch $S/py-patched/uv.lock; mk $S/py-patched/.venv/$SP/lib1/core.bin 2; echo 'home = /usr/bin' > $S/py-patched/.venv/pyvenv.cfg
+mkdir -p $S/py-patched/.venv/$SP/lib1-1.0.dist-info; printf 'lib1/core.bin,sha256=x,2097152\n' > $S/py-patched/.venv/$SP/lib1-1.0.dist-info/RECORD; old 2 $S/py-patched/.venv/pyvenv.cfg $S/py-patched/.venv/$SP/lib1/core.bin $S/py-patched/.venv/$SP/lib1-1.0.dist-info/RECORD $S/py-patched/.venv/$SP/lib1-1.0.dist-info
+echo 'print("debug")' > $S/py-patched/.venv/$SP/lib1/patched.py; old 30 $S/py-patched/pyproject.toml $S/py-patched/uv.lock
+# an older edit (size differs from RECORD) hidden behind a later install of another package
+mkdir -p $S/py-older; echo '[project]' > $S/py-older/pyproject.toml; touch $S/py-older/uv.lock; mkdir -p $S/py-older/.venv; echo 'home = /usr/bin' > $S/py-older/.venv/pyvenv.cfg
+mk $S/py-older/.venv/$SP/lib1/core.bin 2; mkdir -p $S/py-older/.venv/$SP/lib1-1.0.dist-info; printf 'lib1/core.bin,sha256=x,1000\n' > $S/py-older/.venv/$SP/lib1-1.0.dist-info/RECORD
+mk $S/py-older/.venv/$SP/lib2/b.bin 1; mkdir -p $S/py-older/.venv/$SP/lib2-1.0.dist-info; printf 'lib2/b.bin,sha256=x,1048576\n' > $S/py-older/.venv/$SP/lib2-1.0.dist-info/RECORD
+old 30 $S/py-older/pyproject.toml $S/py-older/uv.lock
+# hand files in .venv/bin and .venv/share (not the environment's own scripts, not in any RECORD)
+mkdir -p $S/py-bin/.venv/bin $S/py-bin/.venv/share/mine; echo '[project]' > $S/py-bin/pyproject.toml; touch $S/py-bin/uv.lock; echo 'home = /usr/bin' > $S/py-bin/.venv/pyvenv.cfg
+mk $S/py-bin/.venv/$SP/m/m.bin 1; mkdir -p $S/py-bin/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n../../../bin/mtool,sha256=x,3\n' > $S/py-bin/.venv/$SP/m-1.0.dist-info/RECORD
+echo hi > $S/py-bin/.venv/bin/mtool; touch $S/py-bin/.venv/bin/activate $S/py-bin/.venv/bin/python3; echo 'deploy' > $S/py-bin/.venv/bin/deploy.sh; echo n > $S/py-bin/.venv/share/mine/notes.txt; old 30 $S/py-bin/pyproject.toml $S/py-bin/uv.lock
+# a hand script in .venv/src (pip only clones git checkouts there)
+mkdir -p $S/py-src; echo '[project]' > $S/py-src/pyproject.toml; touch $S/py-src/uv.lock; mkdir -p $S/py-src/.venv/src; echo x > $S/py-src/.venv/src/myscript.py; echo 'home = /usr/bin' > $S/py-src/.venv/pyvenv.cfg
+mk $S/py-src/.venv/$SP/m/m.bin 1; mkdir -p $S/py-src/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n' > $S/py-src/.venv/$SP/m-1.0.dist-info/RECORD; old 30 $S/py-src/pyproject.toml $S/py-src/uv.lock
+mkdir -p $S/py-fake; echo '[project]' > $S/py-fake/pyproject.toml; mk $S/py-fake/.venv/data.bin 2        # no pyvenv.cfg: not offered
+mkdir -p $S/android-app; echo '' > $S/android-app/build.gradle.kts; mk $S/android-app/build/intermediates/i.bin 2; mk $S/android-app/.gradle/buildOutputCleanup/x.bin 1; old 30 $S/android-app/build.gradle.kts
+mkdir -p $S/gradle-libs; echo '' > $S/gradle-libs/build.gradle; mk $S/gradle-libs/build/libs/vendor-sdk.jar 2      # hand-dropped jar, no Gradle output: not offered
+AG=$S/android-git; mkdir -p $AG; cd $AG; git init -q -b main; git config user.email t@t; git config user.name t; echo '' > build.gradle; printf 'build/\n' > .gitignore; git add .; git commit -qm init; cd $T
+mk $AG/build/tmp/t.bin 2                                                                                    # ignored by git: Safe
+NG=$S/gradle-notes; mkdir -p $NG; cd $NG; git init -q -b main; git config user.email t@t; git config user.name t; echo '' > build.gradle; printf 'build/\n' > .gitignore; git add .; git commit -qm init; cd $T
+mk $NG/build/tmp/t.bin 1; mkdir -p $NG/build/notes; echo 'my notes' > $NG/build/notes/n.md                     # ignored, but holds notes: Check first
+NG2=$S/gradle-docs; mkdir -p $NG2; cd $NG2; git init -q -b main; git config user.email t@t; git config user.name t; echo '' > build.gradle; printf 'build/\n' > .gitignore; git add .; git commit -qm init; cd $T
+mk $NG2/build/tmp/t.bin 1; mkdir -p $NG2/build/docs; echo 'notes' > $NG2/build/docs/notes.md                   # docs/ is a name people use: Check first
+JA=$S/java-app; mkdir -p $JA/src/main/java/com/acme; cd $JA; git init -q -b main; git config user.email t@t; git config user.name t
+echo '<project/>' > pom.xml; echo 'class App {}' > src/main/java/com/acme/App.java; printf 'target/\n' > .gitignore; git add .
+GIT_COMMITTER_DATE='2024-01-01T00:00:00' GIT_AUTHOR_DATE='2024-01-01T00:00:00' git commit -qm init; cd $T
+old 60 $JA/pom.xml $JA/.gitignore; mk $JA/target/maven-status/m.bin 2; echo 'class App { int x; }' > $JA/src/main/java/com/acme/App.java   # edited today, 5 levels deep
+# a big repo with many changes elsewhere must not hide an edit in this project
+MO=$S/mono400; mkdir -p $MO/svc/src/main/java/com/acme $MO/aaa; cd $MO; git init -q -b main; git config user.email t@t; git config user.name t
+echo '<project/>' > svc/pom.xml; echo 'class A {}' > svc/src/main/java/com/acme/A.java; printf 'target/\n' > .gitignore; for i in $(seq 1 500); do echo $i > aaa/f$i.txt; done; git add .
+GIT_COMMITTER_DATE='2024-01-01T00:00:00' GIT_AUTHOR_DATE='2024-01-01T00:00:00' git commit -qm init; cd $T
+for i in $(seq 1 500); do echo changed > $MO/aaa/f$i.txt; done; old 60 $MO/aaa/f*.txt $MO/svc/pom.xml $MO/.gitignore
+mk $MO/svc/target/maven-status/m.bin 1; echo 'class A { int y; }' > $MO/svc/src/main/java/com/acme/A.java
+for v in uni untr; do
+  J=$S/java-$v; mkdir -p $J/src/main/java/com/acme; cd $J; git init -q -b main; git config user.email t@t; git config user.name t
+  echo '<project/>' > pom.xml; echo 'class App {}' > src/main/java/com/acme/App.java; printf 'target/\n' > .gitignore; git add .
+  GIT_COMMITTER_DATE='2024-01-01T00:00:00' GIT_AUTHOR_DATE='2024-01-01T00:00:00' git commit -qm init; cd $T
+  old 60 $J/pom.xml $J/.gitignore $J/src/main/java/com/acme/App.java; mk $J/target/maven-status/m.bin 1
+done
+mkdir -p "$S/java-uni/src/main/java/com/café"; echo 'class F {}' > "$S/java-uni/src/main/java/com/café/F.java"   # new, non-ASCII path
+old 60 $S/java-uni/src $S/java-uni/src/main $S/java-uni/src/main/java $S/java-uni/src/main/java/com
+mkdir -p $S/java-untr/src/main/java/com/acme/deep/er/still; echo 'class D {}' > $S/java-untr/src/main/java/com/acme/deep/er/still/D.java
+old 60 $S/java-untr/src/main/java/com/acme/deep $S/java-untr/src/main/java/com/acme $S/java-untr/src/main/java/com $S/java-untr/src/main/java $S/java-untr/src/main $S/java-untr/src
+mkdir -p $S/docs-site; echo '# docs' > $S/docs-site/README.md; mk $S/docs-site/build/index.bin 2       # build/ with no Gradle or Flutter project: not offered
+mkdir -p $S/ios-app; touch $S/ios-app/Podfile $S/ios-app/Podfile.lock; mk $S/ios-app/Pods/Alamofire/a.bin 2; printf 'PODS:\n  - Alamofire (5.9.0)\n\nDEPENDENCIES:\n  - Alamofire\n' > $S/ios-app/Pods/Manifest.lock; old 30 $S/ios-app/Podfile $S/ios-app/Podfile.lock
+mkdir -p $S/ios-patched; touch $S/ios-patched/Podfile $S/ios-patched/Podfile.lock; mk $S/ios-patched/Pods/Alamofire/a.bin 2; printf 'PODS:\n  - Alamofire (5.9.0)\n' > $S/ios-patched/Pods/Manifest.lock
+old 3 $S/ios-patched/Pods/Manifest.lock $S/ios-patched/Pods/Alamofire/a.bin; echo '// debug' > $S/ios-patched/Pods/Alamofire/Session.swift; old 30 $S/ios-patched/Podfile $S/ios-patched/Podfile.lock
+mkdir -p $S/ios-extra; touch $S/ios-extra/Podfile $S/ios-extra/Podfile.lock; mk $S/ios-extra/Pods/Alamofire/a.bin 2; mk $S/ios-extra/Pods/MyHelpers/h.bin 1; printf 'PODS:\n  - Alamofire (5.9.0)\n' > $S/ios-extra/Pods/Manifest.lock
+mkdir -p $S/ios-top; touch $S/ios-top/Podfile $S/ios-top/Podfile.lock; mk $S/ios-top/Pods/Alamofire/a.bin 2; echo '// mine' > $S/ios-top/Pods/MyHelpers.swift; printf 'PODS:\n  - Alamofire (5.9.0)\n' > $S/ios-top/Pods/Manifest.lock
+mkdir -p $S/php-site; echo '{}' > $S/php-site/composer.json; touch $S/php-site/composer.lock; mk $S/php-site/vendor/acme/lib/c.bin 2; touch $S/php-site/vendor/autoload.php
+mkdir -p $S/php-site/vendor/composer $S/php-site/vendor/bin; echo '{"packages":[{"name":"acme/lib"}]}' > $S/php-site/vendor/composer/installed.json
+printf "<?php\ninclude __DIR__ . '/..'.'/acme/lib/bin/tool';\n" > $S/php-site/vendor/bin/tool        # Composer proxy script: fine
+for v in topfile bin; do mkdir -p $S/php-$v/vendor/composer $S/php-$v/vendor/bin; echo '{}' > $S/php-$v/composer.json; touch $S/php-$v/composer.lock; mk $S/php-$v/vendor/acme/lib/c.bin 1
+  echo '{"packages":[{"name":"acme/lib"}]}' > $S/php-$v/vendor/composer/installed.json; touch $S/php-$v/vendor/autoload.php; done
+echo '<?php // mine' > $S/php-topfile/vendor/helpers.php; echo 'deploy' > $S/php-bin/vendor/bin/deploy.sh
+mkdir -p $S/php-legacy; echo '{}' > $S/php-legacy/composer.json; touch $S/php-legacy/composer.lock; mk $S/php-legacy/vendor/acme/lib/c.bin 1; mk $S/php-legacy/vendor/acme-legacy/Lib.bin 1
+mkdir -p $S/php-legacy/vendor/composer; echo '{"packages":[{"name":"acme/lib"}]}' > $S/php-legacy/vendor/composer/installed.json   # acme-legacy is not a Composer package: locked
+mkdir -p $S/ex-app; echo 'defmodule' > $S/ex-app/mix.exs; printf '%%{\n  "jason": {:hex, :jason, "1.4.0"},\n}\n' > $S/ex-app/mix.lock
+mk $S/ex-app/deps/jason/j.bin 1; touch $S/ex-app/deps/jason/.hex; mk $S/ex-app/deps/hiredis/hiredis.bin 1   # hiredis is not in mix.lock: locked
+mkdir -p $S/ex-notes; echo 'defmodule' > $S/ex-notes/mix.exs; mk $S/ex-notes/_build/my-release-notes.bin 1   # no _build/<env>/lib: not offered
+G=$S/vendored; mkdir -p $G; cd $G; git init -q -b main; git config user.email t@t; git config user.name t
+echo '{}' > composer.json; mk vendor/acme/lib/lib.bin 2; mkdir -p vendor/composer; echo '{"packages":[{"name":"acme/lib"}]}' > vendor/composer/installed.json; git add .; git commit -qm init; cd $T   # vendor tracked by git: never offered
+mkdir -p $S/swift-pkg; touch $S/swift-pkg/Package.swift; mk $S/swift-pkg/.build/debug/x.bin 2; echo '{}' > $S/swift-pkg/.build/workspace-state.json
+B="$T/Library/Application Support/MobileSync/Backup"
+mk "$B/00008030-TEST/aa/f.bin" 60
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Device Name</key><string>Test iPhone</string><key>Product Name</key><string>iPhone 13</string><key>Last Backup Date</key><date>2025-01-01T10:00:00Z</date></dict></plist>\n' > "$B/00008030-TEST/Info.plist"
+mk "$B/not-a-backup/x.bin" 60                                                                              # no Info.plist: not listed
+mk $T/.cargo/registry/cache/c.bin 2; mk $T/.m2/repository/r.bin 2; mk $T/.gradle/wrapper/dists/g.bin 2
 cd $T; ln -s $P $T/devlink   # same folder reachable through a second path
 echo "fake home ready at $T"

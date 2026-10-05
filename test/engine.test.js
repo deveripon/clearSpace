@@ -74,6 +74,84 @@ test('verify() refuses tampered or dangerous targets', async () => {
   assert.notStrictEqual(await verify({ ...chrome, action: 'delete' }, path.join(HOME, 'Downloads'), prot), null);
 });
 
+test('other stacks: only real output and installed packages are offered', async () => {
+  const S = path.join(P, 'stacks');
+  const at = (cat, title, label) => result.items.find((i) => i.category === cat && i.title === title && i.kindLabel === label);
+  // offered
+  const rust = at('build', 'rust-cli', 'Rust build output');
+  assert.ok(rust && rust.recommended, 'inactive Rust target recommended');
+  const rustLive = at('build', 'rust-live', 'Rust build output');
+  assert.ok(rustLive && !rustLive.recommended, 'Rust target of a project used today is offered but not preselected');
+  const venv = at('deps', 'py-app', 'Python virtual environment');
+  assert.ok(venv && venv.risk === 'safe' && venv.recommended && venv.installCmd === 'uv sync', 'venv with uv.lock is safe');
+  const reqVenv = at('deps', 'py-req', 'Python virtual environment');
+  assert.ok(reqVenv && reqVenv.risk === 'check' && !reqVenv.recommended, 'requirements.txt only: check first');
+  assert.ok(at('build', 'py-app', 'pytest cache'));
+  const gb = at('build', 'android-app', 'Gradle build output');
+  assert.ok(gb && gb.risk === 'check' && !gb.recommended, 'build/ not ignored by git: Check first');
+  assert.strictEqual(at('build', 'android-git', 'Gradle build output').risk, 'safe', 'build/ ignored by git: Safe');
+  assert.ok(at('build', 'android-app', 'Gradle project cache'));
+  const pods = at('deps', 'ios-app', 'CocoaPods');
+  assert.ok(pods.installCmd === 'pod install' && pods.risk === 'check' && !pods.recommended, 'Pods: offered, never preselected');
+  const php = at('deps', 'php-site', 'Composer packages');
+  assert.ok(php && php.risk === 'check', 'vendor not in git: Check first');
+  // the safety review's reproductions
+  const patched = at('deps', 'py-patched', 'Python virtual environment');
+  assert.ok(patched.risk === 'check' && !patched.recommended && patched.tags.includes('Changed after install') && /patched\.py/.test(patched.lose), 'hand edit in a venv is named');
+  const podsPatched = at('deps', 'ios-patched', 'CocoaPods');
+  assert.ok(podsPatched.risk === 'check' && !podsPatched.recommended && /Session\.swift/.test(podsPatched.lose), 'hand edit in Pods is named');
+  assert.strictEqual(at('deps', 'ios-extra', 'CocoaPods').risk, 'locked', 'a folder in Pods that is not a pod locks it');
+  assert.strictEqual(at('deps', 'php-legacy', 'Composer packages').risk, 'locked', 'non-Composer folder in vendor locks it');
+  assert.strictEqual(at('deps', 'ex-app', 'Mix dependencies').risk, 'locked', 'deps folder not in mix.lock locks it');
+  const mvn = at('build', 'java-app', 'Maven build output');
+  assert.ok(mvn && mvn.risk === 'safe' && !mvn.recommended, 'deep uncommitted edit counts as activity');
+  assert.ok(!at('build', 'java-uni', 'Maven build output').recommended, 'new file with a non-ASCII path counts as activity');
+  assert.ok(!at('build', 'java-untr', 'Maven build output').recommended, 'new file deep in a new folder counts as activity');
+  // second safety review
+  const older = at('deps', 'py-older', 'Python virtual environment');
+  assert.ok(older.risk === 'check' && /lib1\/core\.bin/.test(older.lose), 'an older edit is not hidden by a later install');
+  assert.ok(at('deps', 'py-src', 'Python virtual environment').risk === 'check', 'hand file in .venv/src');
+  assert.strictEqual(at('deps', 'php-topfile', 'Composer packages').risk, 'locked', 'loose file in vendor');
+  assert.strictEqual(at('deps', 'php-bin', 'Composer packages').risk, 'locked', 'own script in vendor/bin');
+  assert.strictEqual(at('deps', 'ios-top', 'CocoaPods').risk, 'locked', 'loose file in Pods');
+  // third safety review
+  const pyBin = at('deps', 'py-bin', 'Python virtual environment');
+  assert.ok(pyBin.risk === 'check' && !pyBin.recommended && /deploy\.sh|notes\.txt/.test(pyBin.lose), 'hand files in .venv/bin or share');
+  assert.ok(!at('build', 'svc', 'Maven build output').recommended, 'edit in a big repo with many other changes');
+  assert.strictEqual(at('build', 'gradle-docs', 'Gradle build output').risk, 'check', 'docs/ inside an ignored build/');
+  const notes = at('build', 'gradle-notes', 'Gradle build output');
+  assert.ok(notes.risk === 'check' && !notes.recommended && /notes/.test(notes.lose), 'notes in an ignored build/ folder');
+  assert.ok(at('build', 'swift-pkg', 'Swift package build'));
+  assert.ok(byTitle('pkg', 'Cargo downloaded crates') && byTitle('pkg', 'Gradle versions'));
+  assert.strictEqual(byTitle('pkg', 'Maven repository').risk, 'check', 'Maven repo may hold locally installed artifacts');
+  const backup = result.items.find((i) => i.group === 'backup');
+  assert.ok(backup && backup.action === 'trash' && !backup.recommended && backup.risk === 'check', 'device backup: Trash, never preselected');
+  assert.ok(!result.items.some((i) => i.paths.some((p) => p.includes('not-a-backup'))), 'folder without Info.plist is not a backup');
+  // never offered: look-alikes
+  const never = ['rust-odd/target', 'photos/target', 'py-fake/.venv', 'docs-site/build', 'vendored/vendor', 'gradle-libs/build', 'ex-notes/_build'];
+  for (const n of never) {
+    assert.ok(!result.items.some((i) => i.paths.includes(path.join(S, n))), `${n} must not be offered`);
+  }
+
+  // Clean re-checks the exact kind: tampering between scan and clean is refused.
+  const prot = protectedSet(['~/Projects']);
+  assert.strictEqual(await verify(rust, rust.paths[0], prot), null);
+  assert.notStrictEqual(await verify({ ...rust, kindId: 'next' }, rust.paths[0], prot), null, 'kind swapped');
+  assert.notStrictEqual(await verify(rust, path.join(S, 'rust-odd', 'target'), prot), null, 'target without CACHEDIR.TAG');
+  assert.notStrictEqual(await verify(rust, path.join(S, 'rust-cli', 'src'), prot), null, 'source folder');
+  assert.notStrictEqual(await verify(venv, path.join(S, 'py-fake', '.venv'), prot), null, 'venv without pyvenv.cfg');
+  assert.notStrictEqual(await verify(php, path.join(S, 'vendored', 'vendor'), prot), null, 'git-tracked vendor');
+  assert.notStrictEqual(await verify(php, path.join(S, 'php-legacy', 'vendor'), prot), null, 'vendor with a non-Composer folder');
+  assert.notStrictEqual(await verify({ ...gb, kindId: 'gradle-build' }, path.join(S, 'gradle-libs', 'build'), prot), null, 'build/ with only a hand-dropped jar');
+  assert.notStrictEqual(await verify(backup, path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup', 'not-a-backup'), prot), null, 'backup without Info.plist');
+  assert.notStrictEqual(await verify(backup, path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup'), prot), null, 'Backup root itself');
+  // marker removed after the scan
+  const cfg = path.join(S, 'py-app', '.venv', 'pyvenv.cfg');
+  fs.renameSync(cfg, cfg + '.moved');
+  assert.notStrictEqual(await verify(venv, venv.paths[0], prot), null, 'pyvenv.cfg gone after scan');
+  fs.renameSync(cfg + '.moved', cfg);
+});
+
 test('clean recommended items, keep everything else', async () => {
   const wtc = result.items.find((i) => i.title === 'agent-clean' && i.group === 'worktree');
   const chosen = [...result.items.filter((i) => i.recommended && i.risk !== 'locked'), wtc];
@@ -150,4 +228,24 @@ test('safety review regressions', async () => {
   const ids = r2.items.map((i) => i.id);
   assert.strictEqual(new Set(ids).size, ids.length, 'no duplicate items');
   assert.ok(!r2.items.some((i) => i.paths.some((p) => p.includes('devlink'))), 'symlinked root collapsed');
+});
+
+test('other stacks after cleaning: output gone, project files kept', async () => {
+  const S = path.join(P, 'stacks');
+  assert.ok(!fs.existsSync(path.join(S, 'rust-cli', 'target')), 'Rust target removed');
+  assert.ok(fs.existsSync(path.join(S, 'rust-cli', 'src', 'main.rs')) && fs.existsSync(path.join(S, 'rust-cli', 'Cargo.toml')), 'Rust sources kept');
+  assert.ok(fs.existsSync(path.join(S, 'rust-live', 'target')), 'active project target kept (not preselected)');
+  assert.ok(!fs.existsSync(path.join(S, 'py-app', '.venv')), 'venv removed');
+  assert.ok(fs.existsSync(path.join(S, 'py-app', 'pyproject.toml')) && fs.existsSync(path.join(S, 'py-app', 'uv.lock')), 'project files kept');
+  assert.ok(fs.existsSync(path.join(S, 'py-req', 'venv')), 'requirements-only venv kept (check first)');
+  for (const n of ['rust-odd/target/mine.bin', 'photos/target/pic.bin', 'py-fake/.venv/data.bin', 'docs-site/build/index.bin', 'vendored/vendor/acme/lib/lib.bin',
+    'gradle-libs/build/libs/vendor-sdk.jar', 'ex-notes/_build/my-release-notes.bin', 'php-legacy/vendor/acme-legacy/Lib.bin', 'ex-app/deps/hiredis/hiredis.bin',
+    'py-patched/.venv/lib/python3.12/site-packages/lib1/patched.py', 'ios-patched/Pods/Alamofire/Session.swift', 'ios-extra/Pods/MyHelpers/h.bin',
+    'java-app/target/maven-status/m.bin', 'android-app/build/intermediates/i.bin', 'gradle-notes/build/notes/n.md', 'php-topfile/vendor/helpers.php',
+    'php-bin/vendor/bin/deploy.sh', 'ios-top/Pods/MyHelpers.swift', 'py-src/.venv/src/myscript.py', 'py-older/.venv/lib/python3.12/site-packages/lib1/core.bin',
+    'py-bin/.venv/bin/deploy.sh', 'py-bin/.venv/share/mine/notes.txt', 'gradle-docs/build/docs/notes.md', 'mono400/svc/target/maven-status/m.bin']) {
+    assert.ok(fs.existsSync(path.join(S, n)), `${n} untouched`);
+  }
+  assert.ok(fs.existsSync(path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup', '00008030-TEST', 'Info.plist')), 'backup untouched');
+  assert.ok(fs.existsSync(path.join(HOME, '.m2', 'repository', 'r.bin')), 'Maven repo untouched (check first)');
 });

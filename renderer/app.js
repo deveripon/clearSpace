@@ -111,7 +111,7 @@
       </button>`;
     let html = navItem('overview', 'Overview', 'overview', null, false);
     html += '<div class="nav-group">Categories</div>';
-    const names = { build: 'Build caches', deps: 'node_modules', leftovers: 'Leftover copies', pkg: 'Developer caches', apps: 'App caches', files: 'Downloads & Trash' };
+    const names = { build: 'Build caches', deps: 'Dependencies', leftovers: 'Leftover copies', pkg: 'Developer caches', apps: 'App caches', files: 'Downloads & Trash' };
     for (const id of Object.keys(names)) {
       const c = cats.find((x) => x.id === id);
       const hasSel = items().some((i) => i.category === id && state.selected.has(i.id));
@@ -305,7 +305,11 @@
       ];
     }
     if (catId === 'files') {
-      return [['Trash', list.filter((i) => i.action === 'empty-trash')], ['Large items in Downloads', list.filter((i) => i.action === 'trash')]];
+      return [
+        ['Trash', list.filter((i) => i.action === 'empty-trash')],
+        ['iPhone and iPad backups', list.filter((i) => i.group === 'backup')],
+        ['Large items in Downloads', list.filter((i) => i.action === 'trash' && i.group !== 'backup')],
+      ];
     }
     return [[null, list]];
   }
@@ -487,9 +491,12 @@
     const suggestPrune = pnpmItem && pnpmDeps && !state.selected.has(pnpmItem.id);
     const warnings = [];
     for (const i of sel) {
-      if (i.category === 'deps' && i.active) warnings.push(`${i.title} was used recently. Run <code>${esc(i.pm)} install</code> before you work on it again.`);
+      if (i.category === 'deps' && i.active) {
+        const cmd = i.installCmd || (i.pm ? `${i.pm} install` : null);
+        warnings.push(`${esc(i.title)} was used recently. ${cmd ? `Run <code>${esc(cmd)}</code>` : 'Install its packages again'} before you work on it again.`);
+      }
       if (i.action === 'empty-trash') warnings.push('Everything in the Trash will be deleted for good.');
-      if (i.category === 'build' && (i.tags || []).includes('Used today')) warnings.push(`Stop the dev server for ${esc(i.title)} if it is running.`);
+      if (i.category === 'build' && (i.tags || []).includes('Used today')) warnings.push(`Stop anything running in ${esc(i.title)} (a dev server, build or tests) before cleaning.`);
     }
     const groups = {};
     for (const i of sel) (groups[METHOD_GROUP[i.action]] = groups[METHOD_GROUP[i.action]] || []).push(i);

@@ -3,20 +3,22 @@ const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
 const { HOME, run, git, diskInfo, expandHome, readdirSafe, trackedState, findNestedGit } = require('./util');
-const { BUILD_DIRS, DEV_CACHES } = require('./catalog');
+const { specById, DEV_CACHES } = require('./catalog');
 const { assessWorktree, backupHistory } = require('./worktree');
+const kinds = require('./kinds');
 
 const CACHES = path.join(HOME, 'Library', 'Caches');
 const DOWNLOADS = path.join(HOME, 'Downloads');
 const TRASH = path.join(HOME, '.Trash');
-const COVERAGE_FILES = ['lcov.info', 'coverage-final.json', 'coverage-summary.json', 'clover.xml', 'lcov-report', 'cobertura-coverage.xml'];
+const BACKUPS = path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup');
 
 /** Folders that must never be removed or emptied themselves, whatever an item says. */
 function protectedSet(projectRoots) {
   const s = new Set(['/', HOME, path.join(HOME, 'Library'), CACHES, DOWNLOADS, TRASH,
     path.join(HOME, 'Desktop'), path.join(HOME, 'Documents'), path.join(HOME, '.cache'),
     path.join(HOME, 'Library', 'Application Support'), path.join(HOME, 'Library', 'Mobile Documents'),
-    path.join(HOME, 'Library', 'CloudStorage'), path.join(HOME, '.ssh'), path.join(HOME, '.config')]);
+    path.join(HOME, 'Library', 'CloudStorage'), path.join(HOME, '.ssh'), path.join(HOME, '.config'),
+    BACKUPS, path.dirname(BACKUPS), path.join(HOME, '.cargo'), path.join(HOME, '.m2'), path.join(HOME, '.gradle')]);
   for (const r of projectRoots || []) {
     const abs = path.resolve(expandHome(r));
     s.add(abs);
@@ -64,21 +66,27 @@ async function check(item, p, protectedPaths) {
   const parent = path.dirname(n);
   const why = await (async () => {
     switch (item.category) {
-      case 'build': {
+      case 'build':
+      case 'deps': {
         if (inToolArea(n)) return 'Inside an app, Library or hidden tool folder';
-        if (!BUILD_DIRS[base]) return 'Not a build cache folder';
-        if (!fs.existsSync(path.join(parent, 'package.json'))) return 'No package.json next to it';
-        if (base === 'coverage') {
-          const inside = new Set((await readdirSafe(n)).map((e) => e.name));
-          if (!COVERAGE_FILES.some((f) => inside.has(f))) return 'Does not look like a coverage report';
+        // The exact kind the scan matched must still match now: name, project files next to it, contents.
+        const spec = specById(item.kindId || (item.category === 'deps' ? 'node-modules' : ''));
+        if (!spec || spec.category !== item.category) return 'Unknown kind of project folder';
+        if (base !== spec.name) return `Not a ${spec.name} folder`;
+        if (!spec.markers.some((m) => fs.existsSync(path.join(parent, m)))) return `No ${spec.markers[0]} next to it`;
+        if (!(await kinds.insideOk(spec, n))) return `Does not look like ${spec.label.toLowerCase()} any more`;
+        if (spec.category === 'deps') {
+          const cont = await kinds.contents(spec, n);
+          if (cont.lock) return cont.lock;
         }
-        return await projectFolderStillDisposable(parent, base, n, protectedPaths);
+        // Something listed as Safe must still be exactly what the scan saw.
+        if (item.risk === 'safe') {
+          if (spec.generic && !(await kinds.ignoredByGit(parent, base))) return 'git no longer ignores it. Scan again.';
+          if (spec.knownTop && (await kinds.unexpectedTop(spec, n))) return 'Something new appeared inside it. Scan again.';
+          if (spec.category === 'deps' && (await kinds.changedAfterInstall(spec, n)).changed) return 'A file inside it changed after the scan. Scan again.';
+        }
+        return await projectFolderStillDisposable(parent, base, n, protectedPaths, spec);
       }
-      case 'deps':
-        if (inToolArea(n)) return 'Inside an app, Library or hidden tool folder';
-        if (base !== 'node_modules') return 'Not a node_modules folder';
-        if (!fs.existsSync(path.join(parent, 'package.json'))) return 'No package.json next to it';
-        return await projectFolderStillDisposable(parent, base, n, protectedPaths);
       case 'leftovers': {
         if (inToolArea(n)) return 'Inside an app, Library or hidden tool folder';
         if (item.group === 'duplicate') {
@@ -107,6 +115,10 @@ async function check(item, p, protectedPaths) {
         return parent === CACHES ? null : 'Not an app cache folder';
       case 'files':
         if (item.action === 'empty-trash') return null;
+        if (item.group === 'backup') {
+          if (parent !== BACKUPS || item.action !== 'trash') return 'Not a device backup folder';
+          return fs.existsSync(path.join(n, 'Info.plist')) ? null : 'Does not look like a device backup any more';
+        }
         return parent === DOWNLOADS && item.action === 'trash' ? null : 'Not in Downloads';
       default:
         return 'Unknown category';
@@ -116,10 +128,10 @@ async function check(item, p, protectedPaths) {
 }
 
 /** Same checks the scan made, repeated right before cleaning: not tracked by git, no git repository inside. */
-async function projectFolderStillDisposable(parent, base, n, protectedPaths) {
+async function projectFolderStillDisposable(parent, base, n, protectedPaths, spec) {
   const root = [...protectedPaths].filter((r) => isInside(n, r) && r !== HOME && r !== '/').sort((a, b) => b.length - a.length)[0] || parent;
   if ((await trackedState(parent, base, root)) !== 'untracked') return 'Git tracks it, or git could not check it';
-  const nested = await findNestedGit(n);
+  const nested = await kinds.nestedGit(spec || {}, n, { findNestedGit });
   if (nested === 'TOO_BIG') return 'Too large to check for git repositories inside';
   if (nested) return 'Contains a git repository';
   return null;

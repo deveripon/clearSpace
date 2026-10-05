@@ -6,10 +6,11 @@ const {
   HOME, run, git: gitRaw, findNestedGit, trackedState, diskUsage, pool, exists, isRealDir, readdirSafe, tilde, expandHome, diskInfo, lastActivity,
 } = require('./util');
 const {
-  CATEGORIES, BUILD_DIRS, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT,
+  CATEGORIES, PROJECT_DIR_NAMES, specCandidates, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT,
   SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN,
 } = require('./catalog');
 const { assessWorktree } = require('./worktree');
+const kinds = require('./kinds');
 
 const DAY = 86400000;
 const MB = 1024 * 1024;
@@ -17,7 +18,8 @@ const LOCKFILES = [
   ['pnpm-lock.yaml', 'pnpm'], ['package-lock.json', 'npm'], ['yarn.lock', 'yarn'],
   ['bun.lockb', 'bun'], ['bun.lock', 'bun'],
 ];
-const NO_DESCEND = new Set(['.git', '.Trash', 'Library', '.venv', 'venv', '__pycache__', '.idea', '.gradle', 'Pods', 'DerivedData']);
+const NO_DESCEND = new Set(['.git', '.Trash', 'Library', '.venv', 'venv', '__pycache__', '.idea', '.gradle', 'Pods', 'DerivedData', 'target', '.build', '.dart_tool', '_build', '.tox']);
+const BACKUPS = path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup');
 const GIT_ENV = { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' };
 
 const idOf = (...parts) => crypto.createHash('sha1').update(parts.join('\n')).digest('hex').slice(0, 12);
@@ -69,7 +71,7 @@ async function git(cwd, args, timeout = 15000) {
 
 /** Walk project folders, collecting generated folders, node_modules, worktrees and duplicate copies. */
 async function walkProjects(roots, onProgress) {
-  const found = { build: [], deps: [], worktrees: [], copies: [] };
+  const found = { project: [], worktrees: [], copies: [] };
   let visited = 0;
 
   async function walk(dir, depth, root) {
@@ -82,18 +84,14 @@ async function walkProjects(roots, onProgress) {
       if (!e.isDirectory() || e.isSymbolicLink()) continue;
       const full = path.join(dir, e.name);
       const name = e.name;
-      if (name === 'node_modules') {
-        // Only a real project's dependencies (package.json next to it). Anything else is left alone.
-        if (names.has('package.json')) found.deps.push({ dir: full, parent: dir, root });
-        continue;
+      if (PROJECT_DIR_NAMES.has(name)) {
+        // Generated or installed folders, only when the project files that prove it are next to them.
+        const cands = specCandidates(name, names);
+        if (cands.length) { found.project.push({ dir: full, parent: dir, root, cands, siblings: names }); continue; }
+        if (name === 'node_modules') continue; // never look inside someone else's packages
       }
       if (name.endsWith('.app')) continue; // never look inside application bundles
       if (NO_DESCEND.has(name)) continue;
-      const bd = BUILD_DIRS[name];
-      if (bd && bd.markers.some((m) => names.has(m))) {
-        found.build.push({ dir: full, parent: dir, kind: name, root });
-        continue;
-      }
       if (name === '.claude' || name === '.codex' || name === '.conductor') {
         const wtDir = path.join(full, 'worktrees');
         for (const w of await readdirSafe(wtDir)) {
@@ -133,50 +131,72 @@ async function buildItems(found, settings, onProgress) {
   };
   const inactiveMs = (settings.inactiveDays || 14) * DAY;
 
+  // ---- Decide what each candidate folder really is (the "inside" check proves it is output, not files of yours)
+  const build = [];
+  const deps = [];
+  for (const f of found.project) {
+    let spec = null;
+    for (const c of f.cands) {
+      if (await kinds.insideOk(c, f.dir)) { spec = c; break; }
+    }
+    if (!spec) continue;
+    (spec.category === 'deps' ? deps : build).push({ ...f, spec });
+  }
+
   // ---- Build caches, grouped per project root + kind
   const buildGroups = new Map();
-  for (const b of found.build) {
+  for (const b of build) {
     // Never touch a folder that git tracks (or when git cannot tell).
-    if ((await trackedState(b.parent, b.kind, b.root)) !== 'untracked') continue;
+    if ((await trackedState(b.parent, b.spec.name, b.root)) !== 'untracked') continue;
     // A git repository inside a build folder is someone's work, not output.
-    if (await findNestedGit(b.dir)) continue;
-    // "coverage" is a common folder name: only treat it as a report when report files are there.
-    if (b.kind === 'coverage') {
-      const inside = new Set((await readdirSafe(b.dir)).map((e) => e.name));
-      if (!['lcov.info', 'coverage-final.json', 'coverage-summary.json', 'clover.xml', 'lcov-report', 'cobertura-coverage.xml'].some((f) => inside.has(f))) continue;
-    }
-    const lr = await findLockRoot(b.parent, b.root);
-    const key = lr.root + '\n' + b.kind;
-    if (!buildGroups.has(key)) buildGroups.set(key, { root: lr.root, kind: b.kind, paths: [] });
-    buildGroups.get(key).paths.push(b.dir);
+    if (await kinds.nestedGit(b.spec, b.dir, { findNestedGit })) continue;
+    // Names people also use for their own folders need git's word that the folder is ignored output.
+    const unconfirmed = b.spec.generic && !(await kinds.ignoredByGit(b.parent, b.spec.name));
+    // Something the tool does not normally write (notes kept in an ignored build/ folder)?
+    const odd = await kinds.unexpectedTop(b.spec, b.dir);
+    const root = b.siblings.has('package.json') ? (await findLockRoot(b.parent, b.root)).root : b.parent;
+    const key = root + '\n' + b.spec.id;
+    if (!buildGroups.has(key)) buildGroups.set(key, { root, spec: b.spec, paths: [], unconfirmed: false, odd: null });
+    const grp = buildGroups.get(key);
+    grp.paths.push(b.dir);
+    if (unconfirmed) grp.unconfirmed = true;
+    if (odd && !grp.odd) grp.odd = path.join(b.spec.name, odd);
   }
   for (const g of buildGroups.values()) {
-    const info = BUILD_DIRS[g.kind];
+    const info = g.spec;
     const last = await activity(g.root);
     const tags = [];
     const usedToday = last && now - last < DAY;
+    const inactive = last ? now - last > inactiveMs : true;
     if (usedToday) tags.push('Used today');
+    else if (info.heavy) { const ago = agoText(last, now); if (ago) tags.push(ago); }
     items.push({
-      id: idOf('build', g.root, g.kind),
+      id: idOf('build', g.root, info.id),
       category: 'build',
       title: path.basename(g.root),
       kindLabel: info.label,
+      kindId: info.id,
       subtitle: tilde(g.root),
       paths: g.paths,
       action: 'delete',
-      risk: 'safe',
-      recommended: true,
-      tags,
+      risk: g.unconfirmed || g.odd ? 'check' : 'safe',
+      // Slow-to-rebuild output (Rust, Gradle, Swift...) is only suggested for projects you are not using.
+      recommended: !g.unconfirmed && !g.odd && (info.heavy ? inactive : true),
+      tags: [...tags, ...(g.unconfirmed ? ['Not ignored by git'] : []), ...(g.odd ? ['Unexpected contents'] : [])],
       what: info.what + (g.paths.length > 1 ? ` (${g.paths.length} folders in this project)` : ''),
       after: info.after,
-      lose: 'No. Only generated files are removed. Your source code is untouched.',
-      note: usedToday ? 'If its dev server is running, stop it before cleaning.' : null,
+      lose: g.odd
+        ? `Possibly: ${g.odd} is not something ${info.label.split(' ')[0]} normally writes there, so it may be a file of yours. Look inside before cleaning.`
+        : g.unconfirmed
+          ? `Probably not, but git does not list ${info.name} as ignored (or the project is not in git), so Clearspace cannot confirm everything in it was generated. Look inside before cleaning.`
+          : 'No. Only generated files are removed. Your source code is untouched.',
+      note: usedToday ? 'If this project is running (a dev server, a build or tests), stop it before cleaning.' : null,
     });
   }
 
   // ---- node_modules, grouped per lockfile root (skip ones inside worktrees: they belong to the worktree item)
   const depGroups = new Map();
-  for (const d of found.deps) {
+  for (const d of deps.filter((x) => x.spec.id === 'node-modules')) {
     const ts = await trackedState(d.parent, 'node_modules', d.root);
     if (ts !== 'untracked') continue; // vendored or unknown: never offered
     d.nestedGit = await findNestedGit(d.dir);
@@ -198,6 +218,8 @@ async function buildItems(found, settings, onProgress) {
       category: 'deps',
       title: path.basename(g.root),
       kindLabel: 'node_modules',
+      kindId: 'node-modules',
+      installCmd: `${pm} install`,
       subtitle: tilde(g.root),
       paths: g.paths,
       action: 'delete',
@@ -215,6 +237,61 @@ async function buildItems(found, settings, onProgress) {
       note: pm === 'pnpm'
         ? 'pnpm shares package files with its store, so most of this space is freed by "Unused packages in the pnpm store" in Developer caches.'
         : (!inactive ? 'You used this project recently. Leave it unless you need the space.' : null),
+    });
+  }
+
+  // ---- Other installed dependencies (Python virtual environments, CocoaPods, Composer, Mix): one item per folder
+  const LOSE = {
+    venv: 'No, unless you installed packages into it by hand that your project files do not list. Your code is untouched.',
+    'venv-plain': 'No, unless you installed packages into it by hand that your project files do not list. Your code is untouched.',
+    pods: 'No, unless you edited files inside Pods by hand. Your Podfile and code are untouched.',
+    composer: 'No, unless you edited files inside vendor by hand. Your code is untouched.',
+    'mix-deps': 'No, unless you edited files inside deps by hand. Your code is untouched.',
+  };
+  for (const d of deps.filter((x) => x.spec.id !== 'node-modules')) {
+    if ((await trackedState(d.parent, d.spec.name, d.root)) !== 'untracked') continue;
+    let nested = await kinds.nestedGit(d.spec, d.dir, { findNestedGit });
+    if (nested === 'TOO_BIG') nested = d.dir;
+    // Everything in the folder must be something the package manager installed, and not edited since.
+    const cont = await kinds.contents(d.spec, d.dir);
+    const edits = cont.lock ? { changed: null, unknown: false } : await kinds.changedAfterInstall(d.spec, d.dir);
+    const unconfirmed = d.spec.generic && !(await kinds.ignoredByGit(d.parent, d.spec.name));
+    const lock = d.spec.locks.find(([f]) => d.siblings.has(f));
+    const exact = Boolean(lock && d.spec.exactLocks.includes(lock[0]));
+    const last = await activity(d.parent);
+    const inactive = last ? now - last > inactiveMs : true;
+    const tags = [];
+    const ago = agoText(last, now);
+    if (ago) tags.push(ago);
+    if (edits.changed) tags.push('Changed after install');
+    if (unconfirmed) tags.push('Not ignored by git');
+    const lockedReason = nested ? `Contains a git repository (${tilde(nested)}) that may hold your own work. Clearspace will not remove it.` : cont.lock;
+    const doubt = cont.check
+      || (edits.changed ? `${edits.changed} was changed after the packages were installed, so it may hold a hand edit (a patch or a debugging change). Look at it before cleaning.` : null)
+      || (edits.unknown ? 'There were too many files to check for hand edits. Look inside before cleaning.' : null)
+      || (unconfirmed ? `git does not list ${d.spec.name} as ignored (or the project is not in git), so Clearspace cannot confirm everything in it was installed by a package manager.` : null)
+      || (d.spec.noAutoSelect ? `${d.spec.label} keeps no per-file record of what it installed, so Clearspace cannot prove nothing in ${d.spec.name} was edited by hand. It is never selected for you.` : null);
+    items.push({
+      id: idOf('deps', d.dir),
+      category: 'deps',
+      title: path.basename(d.parent),
+      kindLabel: d.spec.label,
+      kindId: d.spec.id,
+      installCmd: lock ? lock[1] : null,
+      subtitle: tilde(d.parent),
+      paths: [d.dir],
+      action: 'delete',
+      risk: lockedReason ? 'locked' : (exact && !doubt ? 'safe' : 'check'),
+      recommended: Boolean(!lockedReason && !doubt && inactive && exact),
+      lockedReason,
+      tags,
+      active: !inactive,
+      what: `${d.spec.label} for this project: the packages it needs, installed into ${d.spec.name}.`,
+      after: lock
+        ? `Run \`${lock[1]}\` before you work on it again.${exact ? ` It restores the exact versions from ${lock[0]}.` : ''}`
+        : 'Install its packages again before you work on it. Clearspace found no lockfile, so you may get newer versions.',
+      lose: doubt ? `${LOSE[d.spec.id]} ${doubt}` : LOSE[d.spec.id],
+      note: !inactive ? 'You used this project recently. Leave it unless you need the space.' : null,
     });
   }
 
@@ -451,6 +528,34 @@ async function buildItems(found, settings, onProgress) {
       lose: 'Only if you still need this file. Check before cleaning.',
     });
   }
+  // ---- iPhone and iPad backups made by Finder (readable only with Full Disk Access)
+  for (const e of await readdirSafe(BACKUPS)) {
+    if (!e.isDirectory() || e.isSymbolicLink()) continue;
+    const p = path.join(BACKUPS, e.name);
+    const plist = path.join(p, 'Info.plist');
+    if (!(await exists(plist))) continue; // only folders that are really device backups
+    const info = await readBackupInfo(plist);
+    const when = info['Last Backup Date'] ? new Date(info['Last Backup Date']) : null;
+    const age = when && !Number.isNaN(when.getTime()) ? Math.floor((now - when.getTime()) / DAY) : null;
+    items.push({
+      id: idOf('backup', p),
+      category: 'files',
+      group: 'backup',
+      title: info['Device Name'] || 'iPhone or iPad backup',
+      kindLabel: info['Product Name'] ? `${info['Product Name']} backup` : 'Device backup',
+      subtitle: tilde(p),
+      paths: [p],
+      action: 'trash',
+      risk: 'check',
+      recommended: false,
+      tags: age === null ? [] : [age <= 0 ? 'Backed up today' : `Backed up ${age} day${age === 1 ? '' : 's'} ago`],
+      minSize: 50 * MB,
+      what: 'A backup of an iPhone or iPad that Finder made on this Mac.',
+      after: 'It moves to the Trash. You can put it back until you empty the Trash.',
+      lose: 'Yes, once the Trash is emptied: you could no longer restore the device from this backup. Keep it unless the device is backed up somewhere else, such as iCloud, or you no longer have it.',
+    });
+  }
+
   const trash = path.join(HOME, '.Trash');
   items.push({
     id: idOf('trash'),
@@ -470,6 +575,21 @@ async function buildItems(found, settings, onProgress) {
   });
 
   return items;
+}
+
+/** A few fields from a device backup's Info.plist. plutil turns binary plists into XML; JSON fails on <date>/<data>. */
+async function readBackupInfo(plist) {
+  let xml = '';
+  const r = await run('plutil', ['-convert', 'xml1', '-o', '-', plist], { timeout: 10000 });
+  if (r.code === 0) xml = r.stdout;
+  else { try { const t = await fsp.readFile(plist, 'utf8'); if (t.trimStart().startsWith('<?xml')) xml = t; } catch {} }
+  const un = (v) => v.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const out = {};
+  for (const key of ['Device Name', 'Product Name', 'Last Backup Date']) {
+    const m = new RegExp(`<key>${key}</key>\\s*<(string|date)>([^<]*)</(?:string|date)>`).exec(xml);
+    if (m) out[key] = un(m[2]).trim();
+  }
+  return out;
 }
 
 function prettyBundle(name) {
@@ -577,4 +697,4 @@ async function scan(settings, onProgress) {
   };
 }
 
-module.exports = { scan, walkProjects, buildItems, agoText, prettyBundle, rootProblem };
+module.exports = { scan, walkProjects, buildItems, agoText, prettyBundle, rootProblem, BACKUPS };
