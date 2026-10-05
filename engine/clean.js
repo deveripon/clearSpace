@@ -219,7 +219,7 @@ async function clean(items, deps, onProgress) {
             const r = await emptyDir(p, st);
             if (r.failed) {
               partial = it.action === 'empty-trash' && r.failed === r.total
-                ? 'macOS did not allow emptying the Trash. Give Clearspace Full Disk Access in Settings.'
+                ? 'macOS did not allow emptying the Trash. Give Clearspace Full Disk Access in System Settings.'
                 : `${r.failed} of ${r.total} item${r.total === 1 ? '' : 's'} could not be removed: ${friendly(r.firstErr)}`;
             }
             break;

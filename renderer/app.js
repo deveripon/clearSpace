@@ -174,6 +174,18 @@
       </div>`;
   }
 
+  // Scan warnings. The Full Disk Access one gets a button that opens the right System Settings pane.
+  const needsFda = (text) => /Full Disk Access/.test(text || '');
+  const fdaButton = '<button class="btn" data-act="fda">Open Full Disk Access</button>';
+  function renderWarning(w) {
+    if (!needsFda(w)) return `<div class="notice"><span>${esc(w)}</span></div>`;
+    return `<div class="notice notice-action">
+      <span><strong>The Trash was not measured.</strong> Clearspace needs Full Disk Access to read it.
+      Turn on Clearspace in the list that opens, then quit and reopen Clearspace.</span>
+      ${fdaButton}
+    </div>`;
+  }
+
   function emptyState({ art, title, text, button }) {
     return `<div class="state">
       ${art || ''}
@@ -252,7 +264,7 @@
       </section>`;
 
     // ---- Categories
-    const warn = (state.scan.warnings || []).map((w) => `<div class="notice">${esc(w)}</div>`).join('');
+    const warn = (state.scan.warnings || []).map(renderWarning).join('');
     const rows = state.scan.categories.map((c) => {
       const list = items().filter((i) => i.category === c.id);
       const selN = list.filter((i) => state.selected.has(i.id)).length;
@@ -558,6 +570,7 @@
       ${problems.length ? `<div class="sheet-body">
         <div class="rv-group"><h3><span>Needs your attention</span></h3>
         ${problems.map((r) => `<div class="res-item"><span class="st-${r.status}">${stLabel[r.status] || r.status}</span><span><strong>${esc(r.title)}</strong> ${esc(r.message || '')}</span></div>`).join('')}
+        ${problems.some((r) => needsFda(r.message)) ? `<div class="res-action">${fdaButton}</div>` : ''}
         </div></div>` : ''}
       ${res.freed != null && res.estimated && res.freed < res.estimated * 0.5 ? `<div class="sheet-body"><p class="muted small">
         Less space was freed than the folder sizes suggested. This is normal for pnpm projects: their files are shared with the pnpm store, and they are freed when the store is pruned.</p></div>` : ''}

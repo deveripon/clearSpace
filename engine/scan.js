@@ -555,7 +555,7 @@ async function scan(settings, onProgress) {
   const min = { build: 1 * MB, deps: 1 * MB, leftovers: 1 * MB, pkg: 1 * MB, apps: 5 * MB, files: 50 * MB };
   items = items.filter((it) => {
     if (it.action === 'empty-trash') {
-      if (it.size === null) warnings.push('Clearspace could not measure the Trash. Give it Full Disk Access in Settings to include it.');
+      if (it.size === null) warnings.push('Clearspace could not measure the Trash. Give it Full Disk Access in System Settings to include it.');
       return it.size >= MB;
     }
     if (it.size === null) return it.risk === 'locked';
