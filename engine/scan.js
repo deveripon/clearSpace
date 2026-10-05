@@ -153,14 +153,18 @@ async function buildItems(found, settings, onProgress) {
     // Names people also use for their own folders need git's word that the folder is ignored output.
     const unconfirmed = b.spec.generic && !(await kinds.ignoredByGit(b.parent, b.spec.name));
     // Something the tool does not normally write (notes kept in an ignored build/ folder)?
-    const odd = await kinds.unexpectedTop(b.spec, b.dir);
+    let odd = await kinds.unexpectedTop(b.spec, b.dir);
+    let oddWhy = null;
+    for (const [entry, why] of Object.entries(b.spec.notOutput || {})) {
+      if (await exists(path.join(b.dir, entry))) { odd = entry; oddWhy = why; break; }
+    }
     const root = b.siblings.has('package.json') ? (await findLockRoot(b.parent, b.root)).root : b.parent;
     const key = root + '\n' + b.spec.id;
     if (!buildGroups.has(key)) buildGroups.set(key, { root, spec: b.spec, paths: [], unconfirmed: false, odd: null });
     const grp = buildGroups.get(key);
     grp.paths.push(b.dir);
     if (unconfirmed) grp.unconfirmed = true;
-    if (odd && !grp.odd) grp.odd = path.join(b.spec.name, odd);
+    if (odd && !grp.odd) { grp.odd = path.join(b.spec.name, odd); grp.oddWhy = oddWhy; }
   }
   for (const g of buildGroups.values()) {
     const info = g.spec;
@@ -186,7 +190,7 @@ async function buildItems(found, settings, onProgress) {
       what: info.what + (g.paths.length > 1 ? ` (${g.paths.length} folders in this project)` : ''),
       after: info.after,
       lose: g.odd
-        ? `Possibly: ${g.odd} is not something ${info.label.split(' ')[0]} normally writes there, so it may be a file of yours. Look inside before cleaning.`
+        ? (g.oddWhy ? `Possibly: ${g.oddWhy}` : `Possibly: ${g.odd} is not something ${info.label.split(' ')[0]} normally writes there, so it may be a file of yours. Look inside before cleaning.`)
         : g.unconfirmed
           ? `Probably not, but git does not list ${info.name} as ignored (or the project is not in git), so Clearspace cannot confirm everything in it was generated. Look inside before cleaning.`
           : 'No. Only generated files are removed. Your source code is untouched.',
@@ -267,6 +271,8 @@ async function buildItems(found, settings, onProgress) {
     if (unconfirmed) tags.push('Not ignored by git');
     const lockedReason = nested ? `Contains a git repository (${tilde(nested)}) that may hold your own work. Clearspace will not remove it.` : cont.lock;
     const doubt = cont.check
+      || (edits.changed && edits.why === 'not-locked' ? `${edits.changed} is a package your lockfile does not list, so it was probably installed by hand and may not come back with the reinstall command.` : null)
+      || (edits.changed && edits.why === 'local-source' ? `${edits.changed} was installed from a local folder or a git repository your lockfile does not name, so it may not be possible to install it again.` : null)
       || (edits.changed ? `${edits.changed} was changed after the packages were installed, so it may hold a hand edit (a patch or a debugging change). Look at it before cleaning.` : null)
       || (edits.unknown ? 'There were too many files to check for hand edits. Look inside before cleaning.' : null)
       || (unconfirmed ? `git does not list ${d.spec.name} as ignored (or the project is not in git), so Clearspace cannot confirm everything in it was installed by a package manager.` : null)
@@ -417,7 +423,7 @@ async function buildItems(found, settings, onProgress) {
       tags: [],
       what: c.what,
       after: c.after,
-      lose: 'No, but they must be downloaded again (needs internet) or rebuilt when a tool needs them.',
+      lose: c.lose || 'No, but they must be downloaded again (needs internet) or rebuilt when a tool needs them.',
       note: c.note || null,
       key: c.key,
     });

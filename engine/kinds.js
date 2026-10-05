@@ -154,10 +154,31 @@ async function contents(spec, dir) {
  * that no RECORD claims was put there by hand. Checks each package against itself, so a later install
  * of another package cannot hide an older edit.
  */
-const VENV_BIN_OWN = /^(activate.*|deactivate.*|python[0-9.]*|pythonw?|pydoc[0-9.]*|activate_this\.py|Activate\.ps1)$/;
+// Exactly the files that venv, virtualenv and uv create in bin/ (Scripts/ on Windows layouts).
+const VENV_BIN_OWN = /^(activate|activate\.(bat|csh|fish|nu|ps1|xsh)|Activate\.ps1|activate_this\.py|deactivate|deactivate\.(bat|nu)|pydoc\.bat|python|python3|python3\.\d+|pythonw|python\.exe|pythonw\.exe)$/;
+const pkgName = (n) => n.toLowerCase().replace(/[-_.]+/g, '-');
+const SEEDED = new Set(['pip', 'setuptools', 'wheel', 'distribute']);
+
+/** Package names a lockfile pins (uv.lock, poetry.lock, Pipfile.lock), or null when there is no such lockfile. */
+async function lockedPackages(projectDir) {
+  for (const f of ['uv.lock', 'poetry.lock', 'Pipfile.lock']) {
+    const t = await readText(path.join(projectDir, f));
+    if (t === null) continue;
+    const names = new Set();
+    for (const m of t.matchAll(/^\s*name\s*=\s*"([^"]+)"/gm)) names.add(pkgName(m[1]));
+    for (const m of t.matchAll(/"([A-Za-z0-9][A-Za-z0-9._-]*)"\s*:\s*\{/g)) names.add(pkgName(m[1]));
+    // The project itself (Poetry and uv install it into the venv; poetry.lock does not list it).
+    const pp = await readText(path.join(projectDir, 'pyproject.toml'));
+    const own = pp && /^\s*name\s*=\s*"([^"]+)"/m.exec(pp);
+    return { names, text: t, self: own ? pkgName(own[1]) : null };
+  }
+  return null;
+}
 
 async function venvEdits(dir) {
   let budget = 120000;
+  const project = path.dirname(dir);
+  const lock = await lockedPackages(project);
   const listedOutside = new Set(); // files RECORD lists outside site-packages (scripts in bin/, headers in include/, data in share/)
   for (const lib of ['lib', 'lib64']) {
     for (const py of await dirNames(path.join(dir, lib))) {
@@ -167,6 +188,24 @@ async function venvEdits(dir) {
       const listed = new Set();
       for (const info of infos) {
         claimed.add(info);
+        // Installed by hand? Not pinned by the lockfile, or installed from a local folder or a git URL the lockfile does not name.
+        const name = pkgName(info.replace(/\.dist-info$/, '').split('-')[0]);
+        const where = path.relative(project, path.join(sp, info));
+        const du = await readText(path.join(sp, info, 'direct_url.json'));
+        const isSelf = Boolean(lock && lock.self === name && du && du.includes('file:'));
+        if (lock && !SEEDED.has(name) && !lock.names.has(name) && !isSelf) return { changed: where, unknown: false, why: 'not-locked' };
+        if (du) {
+          let j = null;
+          try { j = JSON.parse(du); } catch {}
+          const url = j && typeof j.url === 'string' ? j.url : '';
+          if (url.startsWith('file:')) {
+            let local = '';
+            try { local = decodeURIComponent(new URL(url).pathname); } catch {}
+            if (!(local === project || local.startsWith(project + '/'))) return { changed: where, unknown: false, why: 'local-source' };
+          } else if (j && j.vcs_info && !(lock && lock.text.includes(url.replace(/^git\+/, '')))) {
+            return { changed: where, unknown: false, why: 'local-source' };
+          }
+        }
         const recPath = path.join(sp, info, 'RECORD');
         const rec = await readText(recPath);
         if (rec === null) return { changed: path.relative(path.dirname(dir), path.join(sp, info)), unknown: false };
@@ -179,7 +218,17 @@ async function venvEdits(dir) {
           parts.pop(); // hash
           const rel = parts.join(',').replace(/^"|"$/g, '');
           if (!rel) continue;
-          if (rel.startsWith('..')) { listedOutside.add(path.resolve(sp, rel)); continue; }
+          if (rel.startsWith('..')) {
+            // Scripts and data a package put outside site-packages (bin/, share/): same size and date checks.
+            const abs = path.resolve(sp, rel);
+            listedOutside.add(abs);
+            let st2 = null;
+            try { st2 = await fsp.lstat(abs); } catch {}
+            if (st2 && !st2.isSymbolicLink() && ((size && Number(size) !== st2.size) || st2.mtimeMs > recTime + 120000)) {
+              return { changed: path.relative(path.dirname(dir), abs), unknown: false };
+            }
+            continue;
+          }
           claimed.add(rel.split('/')[0]);
           listed.add(rel);
           if (rel.endsWith('.pyc') || rel.endsWith('/RECORD')) continue;
@@ -213,6 +262,15 @@ async function venvEdits(dir) {
       if (besides) return { changed: path.relative(path.dirname(dir), path.join(dir, lib, py, besides)), unknown: false };
     }
   }
+  // lib/ and lib64/ hold only the pythonX.Y folders.
+  for (const lib of ['lib', 'lib64']) {
+    for (const e of await readdirSafe(path.join(dir, lib))) {
+      if (e.name === '.DS_Store' || (e.isDirectory() && !e.isSymbolicLink() && /^python\d/.test(e.name))) continue;
+      return { changed: path.relative(project, path.join(dir, lib, e.name)), unknown: false };
+    }
+  }
+  let created = 0;
+  try { created = (await fsp.stat(path.join(dir, 'pyvenv.cfg'))).mtimeMs; } catch {}
   // bin/, share/, include/, etc/, man/: only the environment's own scripts and what some RECORD lists.
   for (const top of ['bin', 'Scripts', 'share', 'include', 'etc', 'man']) {
     let level = [path.join(dir, top)];
@@ -225,7 +283,11 @@ async function venvEdits(dir) {
           const full = path.join(d, e.name);
           if (e.isDirectory() && !e.isSymbolicLink()) { next.push(full); continue; }
           if (listedOutside.has(full)) continue;
-          if ((top === 'bin' || top === 'Scripts') && d === path.join(dir, top) && VENV_BIN_OWN.test(e.name)) continue;
+          if ((top === 'bin' || top === 'Scripts') && d === path.join(dir, top) && VENV_BIN_OWN.test(e.name)) {
+            // Its own scripts are written when the environment is created; a later change is a hand edit (an exported API key...).
+            if (e.isSymbolicLink()) continue;
+            try { if ((await fsp.lstat(full)).mtimeMs <= created + 120000) continue; } catch { continue; }
+          }
           return { changed: path.relative(path.dirname(dir), full), unknown: false };
         }
       }

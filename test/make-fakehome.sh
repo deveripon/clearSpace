@@ -57,26 +57,56 @@ mkdir -p $S/rust-live/src; echo '[package]' > $S/rust-live/Cargo.toml; echo 'fn 
 mkdir -p $S/rust-odd; echo '[package]' > $S/rust-odd/Cargo.toml; mk $S/rust-odd/target/mine.bin 2          # no CACHEDIR.TAG: not offered
 mk $S/photos/target/pic.bin 2                                                                              # no Cargo.toml: not offered
 SP=lib/python3.12/site-packages
-mkdir -p $S/py-app; echo '[project]' > $S/py-app/pyproject.toml; touch $S/py-app/uv.lock; mk $S/py-app/.venv/$SP/requests/x.bin 2; echo 'home = /usr/bin' > $S/py-app/.venv/pyvenv.cfg
+mkdir -p $S/py-app; echo '[project]' > $S/py-app/pyproject.toml; printf '[[package]]\nname = "requests"\n' > $S/py-app/uv.lock; mk $S/py-app/.venv/$SP/requests/x.bin 2; echo 'home = /usr/bin' > $S/py-app/.venv/pyvenv.cfg
 mkdir -p $S/py-app/.venv/$SP/requests-2.32.dist-info; printf 'requests/x.bin,sha256=x,2097152\nrequests-2.32.dist-info/RECORD,,\n' > $S/py-app/.venv/$SP/requests-2.32.dist-info/RECORD
 mk $S/py-app/.pytest_cache/v/x.bin 1; echo "$TAG" > $S/py-app/.pytest_cache/CACHEDIR.TAG; old 30 $S/py-app/pyproject.toml $S/py-app/uv.lock
 mkdir -p $S/py-req; echo 'requests' > $S/py-req/requirements.txt; mk $S/py-req/venv/$SP/req/y.bin 2; echo 'home = /usr/bin' > $S/py-req/venv/pyvenv.cfg; old 30 $S/py-req/requirements.txt
 mkdir -p $S/py-req/venv/$SP/req-1.0.dist-info; printf 'req/y.bin,sha256=x,2097152\n' > $S/py-req/venv/$SP/req-1.0.dist-info/RECORD
 # a package file patched after install => Check first, named
-mkdir -p $S/py-patched; echo '[project]' > $S/py-patched/pyproject.toml; touch $S/py-patched/uv.lock; mk $S/py-patched/.venv/$SP/lib1/core.bin 2; echo 'home = /usr/bin' > $S/py-patched/.venv/pyvenv.cfg
+mkdir -p $S/py-patched; echo '[project]' > $S/py-patched/pyproject.toml; printf '[[package]]\nname = "lib1"\n' > $S/py-patched/uv.lock; mk $S/py-patched/.venv/$SP/lib1/core.bin 2; echo 'home = /usr/bin' > $S/py-patched/.venv/pyvenv.cfg
 mkdir -p $S/py-patched/.venv/$SP/lib1-1.0.dist-info; printf 'lib1/core.bin,sha256=x,2097152\n' > $S/py-patched/.venv/$SP/lib1-1.0.dist-info/RECORD; old 2 $S/py-patched/.venv/pyvenv.cfg $S/py-patched/.venv/$SP/lib1/core.bin $S/py-patched/.venv/$SP/lib1-1.0.dist-info/RECORD $S/py-patched/.venv/$SP/lib1-1.0.dist-info
 echo 'print("debug")' > $S/py-patched/.venv/$SP/lib1/patched.py; old 30 $S/py-patched/pyproject.toml $S/py-patched/uv.lock
 # an older edit (size differs from RECORD) hidden behind a later install of another package
-mkdir -p $S/py-older; echo '[project]' > $S/py-older/pyproject.toml; touch $S/py-older/uv.lock; mkdir -p $S/py-older/.venv; echo 'home = /usr/bin' > $S/py-older/.venv/pyvenv.cfg
+mkdir -p $S/py-older; echo '[project]' > $S/py-older/pyproject.toml; printf '[[package]]\nname = "lib1"\n[[package]]\nname = "lib2"\n' > $S/py-older/uv.lock; mkdir -p $S/py-older/.venv; echo 'home = /usr/bin' > $S/py-older/.venv/pyvenv.cfg
 mk $S/py-older/.venv/$SP/lib1/core.bin 2; mkdir -p $S/py-older/.venv/$SP/lib1-1.0.dist-info; printf 'lib1/core.bin,sha256=x,1000\n' > $S/py-older/.venv/$SP/lib1-1.0.dist-info/RECORD
 mk $S/py-older/.venv/$SP/lib2/b.bin 1; mkdir -p $S/py-older/.venv/$SP/lib2-1.0.dist-info; printf 'lib2/b.bin,sha256=x,1048576\n' > $S/py-older/.venv/$SP/lib2-1.0.dist-info/RECORD
 old 30 $S/py-older/pyproject.toml $S/py-older/uv.lock
 # hand files in .venv/bin and .venv/share (not the environment's own scripts, not in any RECORD)
-mkdir -p $S/py-bin/.venv/bin $S/py-bin/.venv/share/mine; echo '[project]' > $S/py-bin/pyproject.toml; touch $S/py-bin/uv.lock; echo 'home = /usr/bin' > $S/py-bin/.venv/pyvenv.cfg
+mkdir -p $S/py-bin/.venv/bin $S/py-bin/.venv/share/mine; echo '[project]' > $S/py-bin/pyproject.toml; printf '[[package]]\nname = "m"\n' > $S/py-bin/uv.lock; echo 'home = /usr/bin' > $S/py-bin/.venv/pyvenv.cfg
 mk $S/py-bin/.venv/$SP/m/m.bin 1; mkdir -p $S/py-bin/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n../../../bin/mtool,sha256=x,3\n' > $S/py-bin/.venv/$SP/m-1.0.dist-info/RECORD
 echo hi > $S/py-bin/.venv/bin/mtool; touch $S/py-bin/.venv/bin/activate $S/py-bin/.venv/bin/python3; echo 'deploy' > $S/py-bin/.venv/bin/deploy.sh; echo n > $S/py-bin/.venv/share/mine/notes.txt; old 30 $S/py-bin/pyproject.toml $S/py-bin/uv.lock
+# fourth review: edited activate script, look-alike script name, loose file in lib/, package not in the lockfile
+mkdir -p $S/py-act/.venv/bin; echo '[project]' > $S/py-act/pyproject.toml; printf '[[package]]\nname = "m"\n' > $S/py-act/uv.lock; echo 'home = /usr/bin' > $S/py-act/.venv/pyvenv.cfg; touch $S/py-act/.venv/bin/activate
+mk $S/py-act/.venv/$SP/m/m.bin 1; mkdir -p $S/py-act/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n' > $S/py-act/.venv/$SP/m-1.0.dist-info/RECORD
+old 2 $S/py-act/.venv/pyvenv.cfg $S/py-act/.venv/bin/activate $S/py-act/.venv/$SP/m/m.bin $S/py-act/.venv/$SP/m-1.0.dist-info/RECORD; old 30 $S/py-act/pyproject.toml $S/py-act/uv.lock
+echo 'export API_KEY=secret' >> $S/py-act/.venv/bin/activate
+mkdir -p $S/py-name/.venv/bin; echo '[project]' > $S/py-name/pyproject.toml; printf '[[package]]\nname = "m"\n' > $S/py-name/uv.lock; echo 'home = /usr/bin' > $S/py-name/.venv/pyvenv.cfg; touch $S/py-name/.venv/bin/activate
+mk $S/py-name/.venv/$SP/m/m.bin 1; mkdir -p $S/py-name/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n' > $S/py-name/.venv/$SP/m-1.0.dist-info/RECORD
+old 2 $S/py-name/.venv/pyvenv.cfg $S/py-name/.venv/bin/activate $S/py-name/.venv/$SP/m/m.bin $S/py-name/.venv/$SP/m-1.0.dist-info/RECORD; old 30 $S/py-name/pyproject.toml $S/py-name/uv.lock
+echo 'deploy' > $S/py-name/.venv/bin/activate-deploy.sh; old 2 $S/py-name/.venv/bin/activate-deploy.sh
+mkdir -p $S/py-lib/.venv/bin; echo '[project]' > $S/py-lib/pyproject.toml; printf '[[package]]\nname = "m"\n' > $S/py-lib/uv.lock; echo 'home = /usr/bin' > $S/py-lib/.venv/pyvenv.cfg; touch $S/py-lib/.venv/bin/activate
+mk $S/py-lib/.venv/$SP/m/m.bin 1; mkdir -p $S/py-lib/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n' > $S/py-lib/.venv/$SP/m-1.0.dist-info/RECORD
+old 2 $S/py-lib/.venv/pyvenv.cfg $S/py-lib/.venv/bin/activate $S/py-lib/.venv/$SP/m/m.bin $S/py-lib/.venv/$SP/m-1.0.dist-info/RECORD; old 30 $S/py-lib/pyproject.toml $S/py-lib/uv.lock
+echo notes > $S/py-lib/.venv/lib/NOTES.txt; old 2 $S/py-lib/.venv/lib/NOTES.txt
+mkdir -p $S/py-extra/.venv/bin; echo '[project]' > $S/py-extra/pyproject.toml; printf '[[package]]\nname = "m"\n' > $S/py-extra/uv.lock; echo 'home = /usr/bin' > $S/py-extra/.venv/pyvenv.cfg; touch $S/py-extra/.venv/bin/activate
+mk $S/py-extra/.venv/$SP/m/m.bin 1; mkdir -p $S/py-extra/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n' > $S/py-extra/.venv/$SP/m-1.0.dist-info/RECORD
+old 2 $S/py-extra/.venv/pyvenv.cfg $S/py-extra/.venv/bin/activate $S/py-extra/.venv/$SP/m/m.bin $S/py-extra/.venv/$SP/m-1.0.dist-info/RECORD; old 30 $S/py-extra/pyproject.toml $S/py-extra/uv.lock
+mk $S/py-extra/.venv/$SP/extra/e.bin 1; mkdir -p $S/py-extra/.venv/$SP/extra-0.1.dist-info; printf 'extra/e.bin,sha256=x,1048576\n' > $S/py-extra/.venv/$SP/extra-0.1.dist-info/RECORD
+old 2 $S/py-extra/.venv/$SP/extra/e.bin $S/py-extra/.venv/$SP/extra-0.1.dist-info/RECORD
+mkdir -p $S/py-ok/.venv/bin; echo '[project]' > $S/py-ok/pyproject.toml; printf '[[package]]\nname = "m"\n' > $S/py-ok/uv.lock; echo 'home = /usr/bin' > $S/py-ok/.venv/pyvenv.cfg; touch $S/py-ok/.venv/bin/activate
+mk $S/py-ok/.venv/$SP/m/m.bin 1; mkdir -p $S/py-ok/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n' > $S/py-ok/.venv/$SP/m-1.0.dist-info/RECORD
+old 2 $S/py-ok/.venv/pyvenv.cfg $S/py-ok/.venv/bin/activate $S/py-ok/.venv/$SP/m/m.bin $S/py-ok/.venv/$SP/m-1.0.dist-info/RECORD; old 30 $S/py-ok/pyproject.toml $S/py-ok/uv.lock
+# a Poetry project installs itself into the venv; poetry.lock does not list it
+mkdir -p $S/py-poetry/.venv/$SP/acme_api-0.1.0.dist-info $S/py-poetry/.venv/$SP/requests-2.0.dist-info $S/py-poetry/.venv/$SP/requests
+printf '[tool.poetry]\nname = "acme-api"\n' > $S/py-poetry/pyproject.toml; printf '[[package]]\nname = "requests"\n' > $S/py-poetry/poetry.lock; echo 'home = /usr/bin' > $S/py-poetry/.venv/pyvenv.cfg
+mk $S/py-poetry/.venv/$SP/requests/r.bin 1; printf 'requests/r.bin,sha256=x,1048576\n' > $S/py-poetry/.venv/$SP/requests-2.0.dist-info/RECORD
+echo "{\"url\": \"file://$S/py-poetry\", \"dir_info\": {\"editable\": true}}" > $S/py-poetry/.venv/$SP/acme_api-0.1.0.dist-info/direct_url.json
+echo "$S/py-poetry/src" > $S/py-poetry/.venv/$SP/acme_api.pth
+printf 'acme_api.pth,sha256=x,%s\n' $(wc -c < $S/py-poetry/.venv/$SP/acme_api.pth | tr -d ' ') > $S/py-poetry/.venv/$SP/acme_api-0.1.0.dist-info/RECORD; old 30 $S/py-poetry/pyproject.toml $S/py-poetry/poetry.lock
+mkdir -p $S/rs-crit/src; echo '[package]' > $S/rs-crit/Cargo.toml; echo 'fn main(){}' > $S/rs-crit/src/main.rs; mk $S/rs-crit/target/debug/a.bin 1; echo "$TAG" > $S/rs-crit/target/CACHEDIR.TAG
+mkdir -p $S/rs-crit/target/criterion/base; echo '{}' > $S/rs-crit/target/criterion/base/estimates.json; old 40 $S/rs-crit/Cargo.toml $S/rs-crit/src/main.rs
 # a hand script in .venv/src (pip only clones git checkouts there)
-mkdir -p $S/py-src; echo '[project]' > $S/py-src/pyproject.toml; touch $S/py-src/uv.lock; mkdir -p $S/py-src/.venv/src; echo x > $S/py-src/.venv/src/myscript.py; echo 'home = /usr/bin' > $S/py-src/.venv/pyvenv.cfg
+mkdir -p $S/py-src; echo '[project]' > $S/py-src/pyproject.toml; printf '[[package]]\nname = "m"\n' > $S/py-src/uv.lock; mkdir -p $S/py-src/.venv/src; echo x > $S/py-src/.venv/src/myscript.py; echo 'home = /usr/bin' > $S/py-src/.venv/pyvenv.cfg
 mk $S/py-src/.venv/$SP/m/m.bin 1; mkdir -p $S/py-src/.venv/$SP/m-1.0.dist-info; printf 'm/m.bin,sha256=x,1048576\n' > $S/py-src/.venv/$SP/m-1.0.dist-info/RECORD; old 30 $S/py-src/pyproject.toml $S/py-src/uv.lock
 mkdir -p $S/py-fake; echo '[project]' > $S/py-fake/pyproject.toml; mk $S/py-fake/.venv/data.bin 2        # no pyvenv.cfg: not offered
 mkdir -p $S/android-app; echo '' > $S/android-app/build.gradle.kts; mk $S/android-app/build/intermediates/i.bin 2; mk $S/android-app/.gradle/buildOutputCleanup/x.bin 1; old 30 $S/android-app/build.gradle.kts

@@ -83,6 +83,9 @@ async function check(item, p, protectedPaths) {
         if (item.risk === 'safe') {
           if (spec.generic && !(await kinds.ignoredByGit(parent, base))) return 'git no longer ignores it. Scan again.';
           if (spec.knownTop && (await kinds.unexpectedTop(spec, n))) return 'Something new appeared inside it. Scan again.';
+          for (const entry of Object.keys(spec.notOutput || {})) {
+            if (fs.existsSync(path.join(n, entry))) return `${spec.name}/${entry} appeared after the scan. Scan again.`;
+          }
           if (spec.category === 'deps' && (await kinds.changedAfterInstall(spec, n)).changed) return 'A file inside it changed after the scan. Scan again.';
         }
         return await projectFolderStillDisposable(parent, base, n, protectedPaths, spec);

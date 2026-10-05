@@ -56,6 +56,7 @@ const CATEGORIES = [
  *   exactLocks  lockfiles that pin exact versions
  *   knownTop    (generic build folders) what the tool writes at the top level; anything else => "Check first"
  *   noAutoSelect (dependencies) never preselected: the tool keeps no per-package record to prove nothing was edited
+ *   notOutput   entries inside that are not re-creatable output, with the reason => "Check first"
  */
 const PY = ['pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Pipfile', 'tox.ini'];
 const GRADLE = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'];
@@ -82,6 +83,7 @@ const PROJECT_DIRS = [
     what: 'HTML and JSON reports produced by a test coverage run.', after: 'They come back the next time you run tests with coverage.' },
   // ---- Rust, Java, Android, Kotlin
   { id: 'rust-target', name: 'target', category: 'build', label: 'Rust build output', markers: ['Cargo.toml'], inside: ['CACHEDIR.TAG'], heavy: true, nestedGitDepth: 3,
+    notOutput: { criterion: 'target/criterion holds saved Criterion benchmark baselines, which cannot be re-created. Look at it before cleaning.' },
     what: 'Compiled code and build artifacts Cargo writes while you build, test or run this project.',
     after: 'The next `cargo build` compiles everything again, which can take a few minutes.' },
   { id: 'maven-target', name: 'target', category: 'build', label: 'Maven build output', markers: ['pom.xml'], inside: ['maven-status', 'maven-archiver'], heavy: true, generic: true,
@@ -249,6 +251,7 @@ const DEV_CACHES = [
     what: 'Java libraries Maven downloaded, plus anything you installed yourself with `mvn install`.',
     after: 'Maven downloads libraries again on the next build.',
     note: 'Anything you installed by hand with `mvn install` or `install:install-file` (for example a vendor SDK or a database driver jar) cannot be downloaded again. Leave this alone unless you know everything here comes from a public repository.',
+    lose: 'Possibly: libraries from public repositories download again, but anything you installed by hand cannot. See the note.',
   },
   {
     key: 'composer', path: `${H}/Library/Caches/composer`, name: 'Composer download cache', action: 'empty',
@@ -259,6 +262,7 @@ const DEV_CACHES = [
     key: 'xcode-device-support', path: `${H}/Library/Developer/Xcode/iOS DeviceSupport`, name: 'Xcode device support files', action: 'empty', risk: 'check',
     what: 'Debug symbols Xcode copies from each iPhone or iPad you connect, one folder per iOS version.',
     after: 'Xcode copies them again the next time you connect a device for debugging, which takes a few minutes.',
+    lose: 'Only symbols for iOS versions that none of your devices run any more: those cannot be copied again. You need them only to read old crash reports.',
   },
 ];
 

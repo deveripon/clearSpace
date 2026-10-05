@@ -119,6 +119,18 @@ test('other stacks: only real output and installed packages are offered', async 
   assert.ok(pyBin.risk === 'check' && !pyBin.recommended && /deploy\.sh|notes\.txt/.test(pyBin.lose), 'hand files in .venv/bin or share');
   assert.ok(!at('build', 'svc', 'Maven build output').recommended, 'edit in a big repo with many other changes');
   assert.strictEqual(at('build', 'gradle-docs', 'Gradle build output').risk, 'check', 'docs/ inside an ignored build/');
+  // fourth review
+  for (const [proj, re] of [['py-act', /activate/], ['py-name', /activate-deploy/], ['py-lib', /NOTES/], ['py-extra', /extra-0\.1\.dist-info.*lockfile does not list/]]) {
+    const v = at('deps', proj, 'Python virtual environment');
+    assert.ok(v.risk === 'check' && !v.recommended && re.test(v.lose), `${proj}: ${v.lose}`);
+  }
+  const poetry = at('deps', 'py-poetry', 'Python virtual environment');
+  assert.ok(poetry.risk === 'safe' && poetry.recommended && poetry.installCmd === 'poetry install', `Poetry project installed into its own venv: ${poetry.lose}`);
+  const ok = at('deps', 'py-ok', 'Python virtual environment');
+  assert.ok(ok.risk === 'safe' && ok.recommended, 'untouched venv with its activate script stays Safe');
+  const crit = at('build', 'rs-crit', 'Rust build output');
+  assert.ok(crit.risk === 'check' && !crit.recommended && /Criterion/.test(crit.lose), 'Criterion baselines in target');
+  assert.strictEqual(byTitle('pkg', 'Maven repository').lose.startsWith('Possibly'), true);
   const notes = at('build', 'gradle-notes', 'Gradle build output');
   assert.ok(notes.risk === 'check' && !notes.recommended && /notes/.test(notes.lose), 'notes in an ignored build/ folder');
   assert.ok(at('build', 'swift-pkg', 'Swift package build'));
@@ -145,6 +157,12 @@ test('other stacks: only real output and installed packages are offered', async 
   assert.notStrictEqual(await verify({ ...gb, kindId: 'gradle-build' }, path.join(S, 'gradle-libs', 'build'), prot), null, 'build/ with only a hand-dropped jar');
   assert.notStrictEqual(await verify(backup, path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup', 'not-a-backup'), prot), null, 'backup without Info.plist');
   assert.notStrictEqual(await verify(backup, path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup'), prot), null, 'Backup root itself');
+  // Criterion baselines appear after the scan: a Safe Rust item is refused
+  const critDir = path.join(rust.paths[0], 'criterion');
+  fs.mkdirSync(critDir);
+  assert.notStrictEqual(await verify(rust, rust.paths[0], prot), null, 'criterion appeared after scan');
+  fs.rmdirSync(critDir);
+  assert.strictEqual(await verify(rust, rust.paths[0], prot), null);
   // marker removed after the scan
   const cfg = path.join(S, 'py-app', '.venv', 'pyvenv.cfg');
   fs.renameSync(cfg, cfg + '.moved');
@@ -238,12 +256,15 @@ test('other stacks after cleaning: output gone, project files kept', async () =>
   assert.ok(!fs.existsSync(path.join(S, 'py-app', '.venv')), 'venv removed');
   assert.ok(fs.existsSync(path.join(S, 'py-app', 'pyproject.toml')) && fs.existsSync(path.join(S, 'py-app', 'uv.lock')), 'project files kept');
   assert.ok(fs.existsSync(path.join(S, 'py-req', 'venv')), 'requirements-only venv kept (check first)');
+  assert.ok(!fs.existsSync(path.join(S, 'py-ok', '.venv')), 'untouched venv cleaned');
   for (const n of ['rust-odd/target/mine.bin', 'photos/target/pic.bin', 'py-fake/.venv/data.bin', 'docs-site/build/index.bin', 'vendored/vendor/acme/lib/lib.bin',
     'gradle-libs/build/libs/vendor-sdk.jar', 'ex-notes/_build/my-release-notes.bin', 'php-legacy/vendor/acme-legacy/Lib.bin', 'ex-app/deps/hiredis/hiredis.bin',
     'py-patched/.venv/lib/python3.12/site-packages/lib1/patched.py', 'ios-patched/Pods/Alamofire/Session.swift', 'ios-extra/Pods/MyHelpers/h.bin',
     'java-app/target/maven-status/m.bin', 'android-app/build/intermediates/i.bin', 'gradle-notes/build/notes/n.md', 'php-topfile/vendor/helpers.php',
     'php-bin/vendor/bin/deploy.sh', 'ios-top/Pods/MyHelpers.swift', 'py-src/.venv/src/myscript.py', 'py-older/.venv/lib/python3.12/site-packages/lib1/core.bin',
-    'py-bin/.venv/bin/deploy.sh', 'py-bin/.venv/share/mine/notes.txt', 'gradle-docs/build/docs/notes.md', 'mono400/svc/target/maven-status/m.bin']) {
+    'py-bin/.venv/bin/deploy.sh', 'py-bin/.venv/share/mine/notes.txt', 'gradle-docs/build/docs/notes.md', 'mono400/svc/target/maven-status/m.bin',
+    'py-act/.venv/bin/activate', 'py-name/.venv/bin/activate-deploy.sh', 'py-lib/.venv/lib/NOTES.txt', 'py-extra/.venv/lib/python3.12/site-packages/extra/e.bin',
+    'rs-crit/target/criterion/base/estimates.json']) {
     assert.ok(fs.existsSync(path.join(S, n)), `${n} untouched`);
   }
   assert.ok(fs.existsSync(path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup', '00008030-TEST', 'Info.plist')), 'backup untouched');
