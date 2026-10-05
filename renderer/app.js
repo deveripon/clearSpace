@@ -15,6 +15,7 @@
     files: '<path d="M2.5 9.5 4 3.6c.1-.5.6-.9 1.1-.9h5.8c.5 0 1 .4 1.1.9l1.5 5.9v2.8c0 .7-.5 1.2-1.2 1.2H3.7c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M2.6 9.5h3.2l.7 1.4h3l.7-1.4h3.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
     chev: '<path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
     lock: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" fill="none" stroke="currentColor" stroke-width="1.3"/>',
+    done: '<circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.3 8.2 7.2 10l3.5-3.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
     tick: '<path d="M3.5 8.3 6.6 11.3 12.5 4.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
     shield: '<path d="M8 1.8 13 3.6v4.1c0 3.1-2.1 5.4-5 6.5-2.9-1.1-5-3.4-5-6.5V3.6z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M5.8 8.1 7.4 9.6 10.3 6.5" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>',
     eye: '<path d="M1.8 8C3.2 5.2 5.4 3.8 8 3.8s4.8 1.4 6.2 4.2c-1.4 2.8-3.6 4.2-6.2 4.2S3.2 10.8 1.8 8z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.25"/>',
@@ -237,8 +238,8 @@
       line = 'Marked Safe and not in active use';
       actions = '<button class="btn btn-primary btn-large" data-act="select-rec">Select recommended</button>';
     } else {
-      eyebrow = 'All tidy';
-      line = 'Nothing recommended right now';
+      eyebrow = null; // the tidy card below replaces the figure
+      line = '';
       actions = '';
     }
     const d = state.disk;
@@ -246,13 +247,20 @@
       const sel = Math.min(size, d.used);
       return `
         <div class="ov-side">
-          <div class="ov-stat"><span class="k">Free now</span><span class="v num">${fmt(d.free)}</span></div>
+          <div class="ov-stat"><span class="k">Free now</span><span class="v num">${fmt(d.free)}</span>${sel ? '' : `<span class="s num">${Math.round((d.free / d.total) * 100)}% of ${fmt(d.total)}</span>`}</div>
           ${sel ? `
           ${svg('arrow', 'ico ov-arrow')}
           <div class="ov-stat after"><span class="k">After cleaning</span><span class="v num">${fmt(d.free + sel)}</span></div>` : ''}
         </div>`;
     })() : '';
-    const hero = `
+    const hero = eyebrow === null ? `
+      <section class="ov-hero tidy">
+        <div class="ov-main">
+          <div class="tidy-title">${svg('done', 'ico tidy-ico')}<h2>Your Mac is tidy</h2></div>
+          <p class="hero-line">Nothing safe to remove is waiting. Items in use or worth a check are listed below.</p>
+        </div>
+        ${side}
+      </section>` : `
       <section class="ov-hero ${size ? 'has-sel' : ''}">
         <div class="ov-main">
           <div class="eyebrow">${eyebrow}</div>
