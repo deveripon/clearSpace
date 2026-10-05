@@ -19,7 +19,7 @@ const settingsFile = () => path.join(userData(), 'settings.json');
 const historyFile = () => path.join(userData(), 'history.json');
 
 function defaultRoots() {
-  const candidates = ['devripon', 'Projects', 'Developer', 'Code', 'dev', 'Sites', 'work', 'src'];
+  const candidates = ['Projects', 'Developer', 'Code', 'dev', 'Sites', 'work', 'src'];
   const seen = new Set();
   const found = candidates.map((c) => path.join(HOME, c)).filter((p) => {
     try { const real = fs.realpathSync.native(p); if (seen.has(real)) return false; seen.add(real); return true; } catch { return false; }

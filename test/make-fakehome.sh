@@ -6,7 +6,7 @@ case "$T" in *fakehome*) ;; *) echo "dir must contain 'fakehome'"; exit 1;; esac
 rm -rf "$T"; mkdir -p "$T"; export HOME="$T"; cd "$T"
 old(){ local d=$1; shift; local t; if date -v-1d >/dev/null 2>&1; then t=$(date -v-${d}d +%Y%m%d%H%M); else t=$(date -d "$d days ago" +%Y%m%d%H%M); fi; touch -t "$t" "$@"; }
 mk(){ mkdir -p "$(dirname "$1")"; head -c $(( $2 * 1024 * 1024 )) /dev/urandom > "$1"; }
-P=$T/devripon
+P=$T/Projects
 mkdir -p $P/projA/src; echo '{}' > $P/projA/package.json; touch $P/projA/pnpm-lock.yaml; echo x > $P/projA/src/a.ts
 mk $P/projA/node_modules/pkg/big.bin 3; mk $P/projA/.next/cache/c.bin 2; mk $P/projA/coverage/r.bin 1; echo TN: > $P/projA/coverage/lcov.info
 old 60 $P/projA/package.json $P/projA/pnpm-lock.yaml $P/projA/src/a.ts

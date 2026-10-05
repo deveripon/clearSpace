@@ -15,6 +15,11 @@
     files: '<path d="M2.5 9.5 4 3.6c.1-.5.6-.9 1.1-.9h5.8c.5 0 1 .4 1.1.9l1.5 5.9v2.8c0 .7-.5 1.2-1.2 1.2H3.7c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M2.6 9.5h3.2l.7 1.4h3l.7-1.4h3.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
     chev: '<path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
     lock: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" fill="none" stroke="currentColor" stroke-width="1.3"/>',
+    tick: '<path d="M3.5 8.3 6.6 11.3 12.5 4.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
+    shield: '<path d="M8 1.8 13 3.6v4.1c0 3.1-2.1 5.4-5 6.5-2.9-1.1-5-3.4-5-6.5V3.6z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M5.8 8.1 7.4 9.6 10.3 6.5" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>',
+    eye: '<path d="M1.8 8C3.2 5.2 5.4 3.8 8 3.8s4.8 1.4 6.2 4.2c-1.4 2.8-3.6 4.2-6.2 4.2S3.2 10.8 1.8 8z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.25"/>',
+    undo: '<path d="M5.5 4 2.5 7l3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.8 7h6.7a3.8 3.8 0 0 1 0 7.5H7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+    arrow: '<path d="M3 8h10M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
     folder: '<path d="M2 4.5c0-.8.6-1.5 1.5-1.5h2.8l1.4 1.5h4.8c.8 0 1.5.7 1.5 1.5v5.5c0 .8-.7 1.5-1.5 1.5h-9c-.9 0-1.5-.7-1.5-1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
   };
   const svg = (name, cls = 'ico') => `<svg class="${cls}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -79,6 +84,7 @@
     settings: null,
     history: [],
     error: null,
+    lastClean: null, // { freed, items } from the clean that just finished, shown until the next scan
   };
 
   const items = () => (state.scan ? state.scan.items : []);
@@ -139,7 +145,7 @@
 
   function renderActionBar() {
     const el = $('#actionbar');
-    if (state.view === 'settings' || !state.scan || state.scanning) { el.hidden = true; return; }
+    if (state.view === 'settings' || state.view === 'overview' || !state.scan || state.scanning) { el.hidden = true; return; }
     el.hidden = false;
     const sel = effectiveSelection();
     const size = selSize();
@@ -168,26 +174,84 @@
       </div>`;
   }
 
+  function emptyState({ art, title, text, button }) {
+    return `<div class="state">
+      ${art || ''}
+      <h2>${title}</h2><p>${text}</p>
+      ${button || ''}</div>`;
+  }
+  const brandArt = '<img class="state-mark" src="brand/clearspace-mark.svg" width="56" height="56" alt="">';
+
   function renderOverview() {
     if (state.scanning) return renderScanning();
     if (state.error) {
-      return `<div class="state"><h2>The scan stopped</h2><p>${esc(state.error)}</p><button class="btn btn-primary btn-large" data-act="scan">Scan again</button></div>`;
+      return emptyState({ title: 'The scan stopped', text: esc(state.error), button: '<button class="btn btn-primary btn-large" data-act="scan">Scan again</button>' });
+    }
+    if (!state.scan && state.lastClean) {
+      const lc = state.lastClean;
+      return emptyState({
+        art: svg('tick', 'ico state-done'),
+        title: lc.freed != null ? `${fmt(lc.freed)} freed` : 'Cleaning finished',
+        text: `${plural(lc.items, 'item')} cleaned${state.disk ? `. You now have <strong>${fmt(state.disk.free)}</strong> free` : ''}. Scan again whenever you want to see what is left.`,
+        button: '<button class="btn btn-primary btn-large" data-act="scan">Scan again</button>',
+      });
     }
     if (!state.scan) {
-      return `<div class="state"><h2>See what is taking up space</h2>
-        <p>Clearspace looks through your project folders and caches, explains every item and cleans only what you approve.</p>
-        <button class="btn btn-primary btn-large" data-act="scan">Scan now</button></div>`;
+      return emptyState({
+        art: brandArt,
+        title: 'See what is taking up space',
+        text: 'Clearspace looks through your project folders and caches, explains every item and cleans only what you approve.',
+        button: '<button class="btn btn-primary btn-large" data-act="scan">Scan now</button>',
+      });
     }
+
     const recIds = recommendedIds();
     const recSize = items().filter((i) => recIds.includes(i.id)).reduce((a, i) => a + (i.size || 0), 0);
+    const eff = effectiveSelection();
     const size = selSize();
-    const [n, unit] = splitFmt(size || recSize);
     const isRecSel = recIds.length && recIds.every((id) => state.selected.has(id)) && state.selected.size === recIds.length;
-    const line = size
-      ? (isRecSel
-        ? 'is selected: everything marked Safe that you are not actively using. Review the list, then clean.'
-        : `is selected across ${plural(effectiveSelection().length, 'item')}.`)
-      : 'can be cleaned safely. Select the recommended items to start.';
+    const [n, unit] = splitFmt(size || recSize);
+
+    // ---- Summary card: what is selected, and what it does to free space
+    let eyebrow, line, actions;
+    if (size) {
+      eyebrow = 'Ready to clean';
+      line = isRecSel ? plural(eff.length, 'recommended item') : `${plural(eff.length, 'item')} selected`;
+      actions = `<button class="btn btn-primary btn-large" data-act="review">Review and clean</button>
+        ${isRecSel ? '' : '<button class="btn btn-large" data-act="select-rec">Use recommended</button>'}
+        <button class="btn btn-quiet" data-act="clear-all">Clear selection</button>`;
+    } else if (recSize) {
+      eyebrow = 'Safe to clean';
+      line = 'Marked Safe and not in active use';
+      actions = '<button class="btn btn-primary btn-large" data-act="select-rec">Select recommended</button>';
+    } else {
+      eyebrow = 'All tidy';
+      line = 'Nothing recommended right now';
+      actions = '';
+    }
+    const d = state.disk;
+    const side = d ? (() => {
+      const sel = Math.min(size, d.used);
+      return `
+        <div class="ov-side">
+          <div class="ov-stat"><span class="k">Free now</span><span class="v num">${fmt(d.free)}</span></div>
+          ${sel ? `
+          ${svg('arrow', 'ico ov-arrow')}
+          <div class="ov-stat after"><span class="k">After cleaning</span><span class="v num">${fmt(d.free + sel)}</span></div>` : ''}
+        </div>`;
+    })() : '';
+    const hero = `
+      <section class="ov-hero ${size ? 'has-sel' : ''}">
+        <div class="ov-main">
+          <div class="eyebrow">${eyebrow}</div>
+          <div class="hero-figure">${esc(n)}<small>${esc(unit)}</small></div>
+          <p class="hero-line">${esc(line)}</p>
+          ${actions ? `<div class="ov-actions">${actions}</div>` : ''}
+        </div>
+        ${side}
+      </section>`;
+
+    // ---- Categories
     const warn = (state.scan.warnings || []).map((w) => `<div class="notice">${esc(w)}</div>`).join('');
     const rows = state.scan.categories.map((c) => {
       const list = items().filter((i) => i.category === c.id);
@@ -200,17 +264,7 @@
           ${svg('chev', 'chev')}
         </button>`;
     }).join('');
-    return `
-      <div class="hero">
-        <div>
-          <div class="hero-figure">${esc(n)}<small>${esc(unit)}</small></div>
-          <div class="hero-line">${esc(line)}</div>
-        </div>
-        <div class="hero-actions">
-          ${isRecSel ? '' : `<button class="btn btn-large" data-act="select-rec">Select recommended</button>`}
-        </div>
-      </div>
-      ${warn}
+    return `${hero}${warn}
       <div class="section-title">Where the space is</div>
       <div class="cat-list">${rows}</div>`;
   }
@@ -374,6 +428,7 @@
       state.error = (res && res.error) || 'Unknown error';
     } else {
       state.scan = res;
+      state.lastClean = null;
       state.disk = res.disk || state.disk;
       state.selected = new Set(recommendedIds());
       state.open.clear();
@@ -389,6 +444,18 @@
   }
 
   function closeSheet() { if (sheet.open) sheet.close(); }
+
+  // After a clean, however the result sheet is closed (Done or Escape): refresh the disk
+  // figures and show the overview. No automatic re-scan; the person scans again when they want.
+  let afterClean = false;
+  sheet.addEventListener('close', async () => {
+    if (!afterClean) return;
+    afterClean = false;
+    state.view = 'overview';
+    render();
+    try { state.disk = await api.getDisk(); state.history = await api.getHistory(); } catch {}
+    render();
+  });
 
   let reviewIds = null;
   function openReview() {
@@ -464,6 +531,7 @@
     // The old list is no longer accurate: nothing stays selected until the next scan.
     state.selected.clear();
     state.scan = null;
+    afterClean = true;
     showResult(res, total);
   }
   function blockEsc(e) { e.preventDefault(); }
@@ -478,6 +546,7 @@
     }
     const problems = res.results.filter((r) => r.status !== 'done' && !(r.status === 'skipped' && /^Included in/.test(r.message || '')));
     const doneN = res.results.filter((r) => r.status === 'done').length;
+    state.lastClean = { freed: res.freed, items: doneN };
     const stLabel = { error: 'Failed', refused: 'Not cleaned', partial: 'Partly done', skipped: 'Skipped' };
     sheet.innerHTML = `
       <div class="sheet-head">
@@ -544,7 +613,7 @@
       case 'review': openReview(); break;
       case 'sheet-cancel': reviewIds = null; closeSheet(); break;
       case 'clean-go': runClean(); break;
-      case 'result-done': closeSheet(); state.view = 'overview'; state.disk = await api.getDisk(); state.history = await api.getHistory(); startScan(); break;
+      case 'result-done': closeSheet(); break; // the sheet's close handler refreshes the view
       case 'root-add': {
         const p = await api.pickFolder();
         if (p && !state.settings.projectRoots.includes(p)) saveSettings({ projectRoots: [...state.settings.projectRoots, p] });

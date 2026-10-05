@@ -54,7 +54,9 @@ async def main():
             await page.wait_for_selector(".result-figure")
             await page.screenshot(path=OUT / "5-result.png")
             await page.click('[data-act="result-done"]')
-            await page.wait_for_selector(".hero-figure", timeout=8000)
+            # no automatic re-scan: the overview shows what was freed and waits
+            await page.wait_for_selector(".state h2:has-text(\"freed\")", timeout=8000)
+            await page.screenshot(path=OUT / "5b-after-clean.png")
             # settings
             await page.click('#nav-settings')
             await page.screenshot(path=OUT / "6-settings.png")

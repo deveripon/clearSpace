@@ -1,8 +1,8 @@
 // Browser-only mock of window.api for UI screenshots. Data mirrors a real scan of this Mac.
 (() => {
   const GB = 1e9, MB = 1e6;
-  const H = '~/devripon/Final & Running Project';
-  const item = (o) => ({ tags: [], paths: [o.subtitle.replace('~', '/Users/devripon')], ...o });
+  const H = '~/Projects';
+  const item = (o) => ({ tags: [], paths: [o.subtitle.replace('~', '/Users/alex')], ...o });
   const build = (id, title, kind, size, sub, tags = []) => item({
     id, category: 'build', title, kindLabel: kind, subtitle: sub, size, action: 'delete', risk: 'safe', recommended: true, tags,
     what: kind === 'Turborepo cache' ? 'Saved results of earlier builds, lints and tests so Turborepo can skip repeated work.' : 'Compiled pages and the development cache that Next.js writes while you run `next dev` or `next build`.',
@@ -15,7 +15,7 @@
     lose: 'No. Your code, git history and .env files are not inside node_modules.',
     note: 'pnpm shares package files with its store, so most of this space is freed by "Unused packages in the pnpm store" in Developer caches.',
   });
-  const wt = (id, name, branch, size, unpushed, dirty, base = 'island-tours') => item({
+  const wt = (id, name, branch, size, unpushed, dirty, base = 'travel-app') => item({
     id, category: 'leftovers', title: name, kindLabel: `worktree of ${base}`, subtitle: `${H}/${base}/.claude/worktrees/${name}`, size,
     group: 'worktree', action: 'worktree', risk: dirty ? 'locked' : (unpushed ? 'check' : 'safe'), recommended: !dirty && !unpushed,
     lockedReason: dirty ? `Has ${dirty} uncommitted changes. Commit or discard them first.` : null,
@@ -30,22 +30,22 @@
     lose: 'No. Caches never hold your documents, settings or logins.',
   });
   const items = [
-    build('b1', 'veyro-app', 'Next.js build cache', 16.83 * GB, `${H}/veyro/veyro-app`),
-    build('b2', 'veyro-app', 'Turborepo cache', 16.21 * GB, `${H}/veyro/veyro-app`),
-    build('b3', 'wattup-proforma', 'Next.js build cache', 0.44 * GB, `${H}/wattup-usa/wattup-proforma`, ['Used today']),
-    build('b4', 'wattup-frontend', 'Next.js build cache', 0.31 * GB, `${H}/wattup-usa/wattup-frontend`, ['Used today']),
-    deps('d1', 'veyro-app', 1.65 * GB, `${H}/veyro/veyro-app`, 'Used 5 days ago', true),
-    deps('d2', 'wattup-frontend', 1.37 * GB, `${H}/wattup-usa/wattup-frontend`, 'Used today', true),
-    deps('d3', 'wattup-proforma', 0.94 * GB, `${H}/wattup-usa/wattup-proforma`, 'Used today', true),
-    deps('d4', 'tw-comingsoon', 0.76 * GB, `${H}/tw-comingsoon`, 'Used 26 days ago', false),
-    deps('d5', 'system-design', 0.76 * GB, '~/devripon/System Design and Enginnering/system-design', 'Used 7 days ago', true),
+    build('b1', 'acme-web', 'Next.js build cache', 16.83 * GB, `${H}/acme/acme-web`),
+    build('b2', 'acme-web', 'Turborepo cache', 16.21 * GB, `${H}/acme/acme-web`),
+    build('b3', 'invoice-app', 'Next.js build cache', 0.44 * GB, `${H}/side-projects/invoice-app`, ['Used today']),
+    build('b4', 'dashboard', 'Next.js build cache', 0.31 * GB, `${H}/side-projects/dashboard`, ['Used today']),
+    deps('d1', 'acme-web', 1.65 * GB, `${H}/acme/acme-web`, 'Used 5 days ago', true),
+    deps('d2', 'dashboard', 1.37 * GB, `${H}/side-projects/dashboard`, 'Used today', true),
+    deps('d3', 'invoice-app', 0.94 * GB, `${H}/side-projects/invoice-app`, 'Used today', true),
+    deps('d4', 'landing-page', 0.76 * GB, `${H}/landing-page`, 'Used 26 days ago', false),
+    deps('d5', 'system-design', 0.76 * GB, '~/Projects/learning/system-design', 'Used 7 days ago', true),
     wt('w1', 'agent-aa0d6f99e2f2c61b9', 'worktree-agent-aa0d6f99e2f2c61b9', 2.66 * GB, 1, 0),
     wt('w2', 'agent-aa8dd424320610d31', 'worktree-agent-aa8dd424320610d31', 2.51 * GB, 2, 0),
     wt('w3', 'agent-a79eed028521041b0', 'fix/tour-page-reviews-order', 2.2 * GB, 0, 0),
     wt('w4', 'agent-a4caf814f8e24bf6a', 'worktree-agent-a4caf814f8e24bf6a', 1.64 * GB, 1, 3),
-    item({ id: 'c1', category: 'leftovers', title: 'island-tours copy', kindLabel: 'Duplicate of island-tours', subtitle: `${H}/island-tours copy`, size: 13.4 * GB,
+    item({ id: 'c1', category: 'leftovers', title: 'travel-app copy', kindLabel: 'Duplicate of travel-app', subtitle: `${H}/travel-app copy`, size: 13.4 * GB,
       group: 'duplicate', action: 'trash', risk: 'check', recommended: false, tags: ['Same latest commit as the original'],
-      what: 'A Finder copy of island-tours, including its own node_modules and worktrees.', after: 'The whole folder moves to the Trash. You can put it back from the Trash until you empty it.',
+      what: 'A Finder copy of travel-app, including its own node_modules and worktrees.', after: 'The whole folder moves to the Trash. You can put it back from the Trash until you empty it.',
       lose: 'Probably not: it is at the same commit as the original. Check for files you changed only in the copy.' }),
     item({ id: 'p1', key: 'pnpm-prune', category: 'pkg', title: 'Unused packages in the pnpm store', subtitle: '~/Library/pnpm/store', size: 9.8 * GB, sizeLabel: 'Up to',
       action: 'pnpm-prune', risk: 'safe', recommended: false,
@@ -80,7 +80,7 @@
   const listeners = { scan: [], clean: [], menu: [] };
   const sub = (k) => (cb) => { listeners[k].push(cb); return () => { listeners[k] = listeners[k].filter((x) => x !== cb); }; };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  let settings = { projectRoots: ['~/devripon'], inactiveDays: 14, scanOnLaunch: window.__MOCK_SCAN_ON_LAUNCH__ !== false };
+  let settings = { projectRoots: ['~/Projects'], inactiveDays: 14, scanOnLaunch: window.__MOCK_SCAN_ON_LAUNCH__ !== false };
   window.api = {
     getSettings: async () => settings,
     saveSettings: async (s) => (settings = { ...settings, ...s }),
@@ -92,11 +92,11 @@
     onScanProgress: sub('scan'), onCleanProgress: sub('clean'), onMenu: sub('menu'),
     scan: async () => {
       const delay = window.__MOCK_SCAN_DELAY__ ?? 300;
-      listeners.scan.forEach((f) => f({ phase: 'walk', detail: '~/devripon/Final & Running Project/veyro' }));
+      listeners.scan.forEach((f) => f({ phase: 'walk', detail: '~/Projects/acme' }));
       await wait(delay);
-      listeners.scan.forEach((f) => f({ phase: 'measure', detail: 'veyro-app', done: 9, total: 22 }));
+      listeners.scan.forEach((f) => f({ phase: 'measure', detail: 'acme-web', done: 9, total: 22 }));
       await wait(delay);
-      return { items, categories: cats, warnings: [], disk, roots: ['~/devripon'], scannedAt: Date.now() - 60000 };
+      return { items, categories: cats, warnings: [], disk, roots: ['~/Projects'], scannedAt: Date.now() - 60000 };
     },
     clean: async (ids) => {
       for (let i = 0; i < ids.length; i++) { listeners.clean.forEach((f) => f({ index: i + 1, total: ids.length, title: 'item ' + (i + 1) })); await wait(40); }

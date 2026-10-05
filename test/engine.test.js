@@ -11,13 +11,13 @@ assert.ok(HOME.includes('fakehome'), 'Refusing to run outside a fake HOME');
 const { scan } = require('../engine/scan');
 const { clean, verify, protectedSet } = require('../engine/clean');
 
-const P = path.join(HOME, 'devripon');
+const P = path.join(HOME, 'Projects');
 let result;
 assert.ok(true);
 const byTitle = (cat, title) => result.items.find((i) => i.category === cat && i.title === title);
 
 test('scan finds the right items', async () => {
-  result = await scan({ projectRoots: ['~/devripon'], inactiveDays: 14 }, () => {});
+  result = await scan({ projectRoots: ['~/Projects'], inactiveDays: 14 }, () => {});
   const summary = result.items.map((i) => `${i.category} | ${i.title} | ${i.kindLabel || ''} | ${(i.size / 1048576).toFixed(1)}MB | ${i.risk}${i.recommended ? ' REC' : ''} | ${i.paths.length}p | ${i.tags.join(', ')}`);
   console.log(summary.join('\n'));
   console.log('warnings:', result.warnings, 'took', result.tookMs, 'ms');
@@ -61,7 +61,7 @@ test('scan finds the right items', async () => {
 });
 
 test('verify() refuses tampered or dangerous targets', async () => {
-  const prot = protectedSet(['~/devripon']);
+  const prot = protectedSet(['~/Projects']);
   const nm = byTitle('deps', 'projA');
   assert.strictEqual(await verify(nm, nm.paths[0], prot), null);
   assert.notStrictEqual(await verify(nm, path.join(P, 'projA', 'src'), prot), null, 'src is not node_modules');
@@ -81,7 +81,7 @@ test('clean recommended items, keep everything else', async () => {
   const dup = result.items.find((i) => i.title === 'repo copy');
   const trashed = [];
   const out = await clean([...chosen, dup], {
-    projectRoots: ['~/devripon'],
+    projectRoots: ['~/Projects'],
     trash: async (p) => { trashed.push(p); fs.renameSync(p, path.join(HOME, '.Trash', path.basename(p))); },
   }, () => {});
   console.log(out.results.map((r) => `${r.status.padEnd(8)} ${r.title} ${r.message || ''}`).join('\n'));
@@ -136,7 +136,7 @@ test('safety review regressions', async () => {
 
   // Even if a locked item is forced into clean(), nothing is removed.
   const forced = ['rel-dirty', 'hidden-untracked', 'detached', 'env-unique', 'clone'].map(wt).map((i) => ({ ...i, risk: 'safe' }));
-  const out = await clean(forced, { projectRoots: ['~/devripon'], trash: async () => { throw new Error('no trash expected'); } }, () => {});
+  const out = await clean(forced, { projectRoots: ['~/Projects'], trash: async () => { throw new Error('no trash expected'); } }, () => {});
   console.log(out.results.map((r) => `${r.status} ${r.title}: ${r.message}`).join('\n'));
   assert.ok(out.results.every((r) => r.status === 'refused' || r.status === 'error'));
   assert.ok(fs.existsSync(path.join(E, '.claude/worktrees/rel-dirty/package.json')));
@@ -146,7 +146,7 @@ test('safety review regressions', async () => {
   assert.ok(fs.existsSync(path.join(E, '.claude/worktrees/detached/d.txt')));
 
   // Same folder through two roots: scanned once, no duplicate ids.
-  const r2 = await scan({ projectRoots: ['~/devripon', '~/devlink'], inactiveDays: 14 }, () => {});
+  const r2 = await scan({ projectRoots: ['~/Projects', '~/devlink'], inactiveDays: 14 }, () => {});
   const ids = r2.items.map((i) => i.id);
   assert.strictEqual(new Set(ids).size, ids.length, 'no duplicate items');
   assert.ok(!r2.items.some((i) => i.paths.some((p) => p.includes('devlink'))), 'symlinked root collapsed');

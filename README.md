@@ -1,8 +1,9 @@
-<p align="center">
-  <img src="build/icon.png" width="96" alt="">
-</p>
-
-<h1 align="center">Clearspace</h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/clearspace-logo-white.svg">
+    <img src="docs/brand/clearspace-logo.svg" height="48" alt="Clearspace">
+  </picture>
+</h1>
 
 <p align="center">
   Free up disk space on your Mac without the fear of deleting something you need.<br>
@@ -47,7 +48,7 @@ rm -rf /Applications/Clearspace.app ~/Library/Application\ Support/Clearspace
 
 The result shows how much free space you actually gained, measured on the disk rather than estimated.
 
-On first launch, open **Settings** and check the project folders. By default Clearspace uses whichever of `~/devripon`, `~/Projects`, `~/Developer`, `~/Code`, `~/dev`, `~/Sites`, `~/work` and `~/src` exist.
+On first launch, open **Settings** and check the project folders. By default Clearspace uses whichever of `~/Projects`, `~/Developer`, `~/Code`, `~/dev`, `~/Sites`, `~/work` and `~/src` exist.
 
 <p align="center">
   <img src="docs/review.png" width="820" alt="The review sheet lists every item that will be cleaned, grouped by how it is cleaned, before anything happens">

@@ -22,7 +22,7 @@ const gitInit = (dir) => {
   sh('git init -q -b main && git config user.email t@t && git config user.name t', dir);
 };
 
-const P = path.join(HOME, 'devripon');
+const P = path.join(HOME, 'Projects');
 const OUTSIDE = HOME + '-outside';
 fs.rmSync(OUTSIDE, { recursive: true, force: true });
 
@@ -178,7 +178,7 @@ const find = (fn) => result.items.find(fn);
 const trashStub = async (p) => { throw new Error('unexpected trash of ' + p); };
 
 test('scan', async () => {
-  result = await scan({ projectRoots: ['~/devripon', '~', '~/Library', '~/.bun'], inactiveDays: 14 }, () => {});
+  result = await scan({ projectRoots: ['~/Projects', '~', '~/Library', '~/.bun'], inactiveDays: 14 }, () => {});
   console.log(result.items.map((i) => `${i.category} | ${i.title} | ${i.risk}${i.recommended ? ' REC' : ''} | ${i.paths.join(', ')}`).join('\n'));
   console.log('warnings:', result.warnings);
 });
@@ -228,7 +228,7 @@ test('a folder named "X copy" next to a FILE X is not a duplicate', () => {
 
 test('cleaning worktrees never makes a commit unreachable', async () => {
   const items = ['reflog-orphan', 'wt-ref', 'locked-wt'].map((t) => ({ ...find((i) => i.title === t), risk: 'safe' }));
-  const out = await clean(items, { projectRoots: ['~/devripon'], trash: trashStub }, () => {});
+  const out = await clean(items, { projectRoots: ['~/Projects'], trash: trashStub }, () => {});
   console.log(out.results.map((r) => `${r.status} ${r.title}: ${r.message}`).join('\n'));
   assert.strictEqual(out.results.find((r) => r.title === 'locked-wt').status, 'refused');
   assert.ok(exists(path.join(R, '.claude', 'worktrees', 'locked-wt')));
@@ -252,13 +252,13 @@ test('a folder swapped for a symlink after the scan is never followed', async ()
   assert.ok(it);
   fs.renameSync(SWAP, SWAP + '-moved');
   fs.symlinkSync(VICTIM, SWAP); // swapme -> ~/Documents/victim (which has its own node_modules)
-  const out = await clean([it], { projectRoots: ['~/devripon'], trash: trashStub }, () => {});
+  const out = await clean([it], { projectRoots: ['~/Projects'], trash: trashStub }, () => {});
   assert.notStrictEqual(out.results[0].status, 'done');
   assert.ok(exists(path.join(VICTIM, 'node_modules', 'precious.bin')), 'victim untouched');
 });
 
 test('verify refuses node_modules in tool areas even if an item claims them', async () => {
-  const prot = protectedSet(['~/devripon']);
+  const prot = protectedSet(['~/Projects']);
   const fake = { category: 'deps', action: 'delete', paths: [] };
   const nvm = path.join(P, '.nvm-like', 'lib', 'node_modules');
   assert.ok((await check(fake, nvm, prot)).why);
@@ -276,7 +276,7 @@ test('emptying reports partial failure honestly', async () => {
   big(path.join(c, 'stuck', 'b.bin'), 1);
   fs.chmodSync(path.join(c, 'stuck'), 0o500);
   const item = { id: 'x', title: 'example', category: 'apps', action: 'empty', paths: [c], size: 2 };
-  const out = await clean([item], { projectRoots: ['~/devripon'], trash: trashStub }, () => {});
+  const out = await clean([item], { projectRoots: ['~/Projects'], trash: trashStub }, () => {});
   if (exists(path.join(c, 'stuck'))) fs.chmodSync(path.join(c, 'stuck'), 0o700);
   const r = out.results[0];
   if (process.getuid && process.getuid() === 0) {
@@ -295,7 +295,7 @@ test('second round: big node_modules, hidden repos, odd names, missing git', asy
   assert.ok(hr && hr.risk === 'locked' && /git repository/.test(hr.lockedReason), 'repo inside ignored .next locks the worktree');
   const fl = result.items.find((i) => i.title === 'fix.lock');
   assert.ok(fl && fl.risk === 'check');
-  const out = await clean([fl], { projectRoots: ['~/devripon'], trash: trashStub }, () => {});
+  const out = await clean([fl], { projectRoots: ['~/Projects'], trash: trashStub }, () => {});
   assert.strictEqual(out.results[0].status, 'done', out.results[0].message);
   const sha = fs.readFileSync(path.join(R, 'fixlock.sha'), 'utf8').trim();
   assert.match(sh(`git for-each-ref --contains ${sha} --format="%(refname)"`, R), /refs\/clearspace-backup\/fix_lock\//);
@@ -308,7 +308,7 @@ test('second round: big node_modules, hidden repos, odd names, missing git', asy
   const savedPath = process.env.PATH;
   process.env.PATH = '/nonexistent-bin';
   let r2;
-  try { r2 = await scan({ projectRoots: ['~/devripon'], inactiveDays: 14 }, () => {}); } finally { process.env.PATH = savedPath; }
+  try { r2 = await scan({ projectRoots: ['~/Projects'], inactiveDays: 14 }, () => {}); } finally { process.env.PATH = savedPath; }
   for (const p of [path.join(NOGIT, 'coverage'), path.join(NOGIT, 'node_modules')]) {
     assert.ok(!r2.items.some((i) => i.paths.includes(p)), 'without git, tracked folder still not offered: ' + p);
   }
@@ -342,7 +342,7 @@ test('final round: unicode names, broken repos, deep nested repos, re-check at c
   assert.ok(late, 'late-clone offered at scan time');
   gitInit(path.join(LATE, 'node_modules', 'x'));
   sh('git add . && git commit -qm "cloned after scan"', path.join(LATE, 'node_modules', 'x'));
-  const out = await clean([late], { projectRoots: ['~/devripon'], trash: trashStub }, () => {});
+  const out = await clean([late], { projectRoots: ['~/Projects'], trash: trashStub }, () => {});
   assert.strictEqual(out.results[0].status, 'refused', out.results[0].message);
   assert.ok(exists(path.join(LATE, 'node_modules', 'x', 'index.js')), 'late clone kept');
 });
