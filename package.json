@@ -1,0 +1,63 @@
+{
+  "name": "clearspace",
+  "productName": "Clearspace",
+  "version": "1.0.0",
+  "description": "Free up disk space on your Mac safely: build caches, node_modules, agent worktrees and app caches, explained before anything is cleaned.",
+  "main": "main.js",
+  "private": true,
+  "author": "Ripon (deveripon)",
+  "license": "MIT",
+  "homepage": "https://github.com/deveripon/clearSpace#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deveripon/clearSpace.git"
+  },
+  "bugs": {
+    "url": "https://github.com/deveripon/clearSpace/issues"
+  },
+  "keywords": [
+    "macos",
+    "disk-space",
+    "cleaner",
+    "node_modules",
+    "electron",
+    "developer-tools"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac --dir",
+    "test": "bash test/make-fakehome.sh /tmp/clearspace-fakehome && HOME=/tmp/clearspace-fakehome node --test test/engine.test.js && HOME=/tmp/clearspace-fakehome-safety node --test test/safety.test.js"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.devripon.clearspace",
+    "productName": "Clearspace",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "engine/**",
+      "renderer/**",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "dir"
+        }
+      ],
+      "identity": null,
+      "darkModeSupport": true,
+      "extendInfo": {
+        "NSDownloadsFolderUsageDescription": "Clearspace lists large files in Downloads so you can decide whether to remove them."
+      }
+    }
+  }
+}
