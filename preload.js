@@ -8,6 +8,7 @@ const listen = (channel) => (cb) => {
 };
 
 contextBridge.exposeInMainWorld('api', {
+  platform: process.platform,
   scan: () => ipcRenderer.invoke('scan'),
   clean: (ids, scanId) => ipcRenderer.invoke('clean', ids, scanId),
   getDisk: () => ipcRenderer.invoke('disk:get'),

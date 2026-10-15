@@ -2,12 +2,11 @@
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
-const { run, diskInfo, tilde, expandHome } = require('./engine/util');
+const { run, disksInfo, tilde, expandHome } = require('./engine/util');
 const { scan, rootProblem } = require('./engine/scan');
 const { clean } = require('./engine/clean');
+const { IS_WIN, HOME, LOCAL, ROAMING } = require('./engine/platform');
 
-const HOME = os.homedir();
 let win = null;
 let lastScan = null;
 let busy = false;
@@ -19,7 +18,8 @@ const settingsFile = () => path.join(userData(), 'settings.json');
 const historyFile = () => path.join(userData(), 'history.json');
 
 function defaultRoots() {
-  const candidates = ['Projects', 'Developer', 'Code', 'dev', 'Sites', 'work', 'src'];
+  const candidates = ['Projects', 'Developer', 'Code', 'dev', 'Sites', 'work', 'src',
+    ...(IS_WIN ? [path.join('source', 'repos'), 'repos', path.join('Documents', 'GitHub')] : [])];
   const seen = new Set();
   const found = candidates.map((c) => path.join(HOME, c)).filter((p) => {
     try { const real = fs.realpathSync.native(p); if (seen.has(real)) return false; seen.add(real); return true; } catch { return false; }
@@ -43,7 +43,16 @@ function getSettings() {
 }
 
 // Apps opened from Finder get a minimal PATH. Borrow the login shell's PATH so git and pnpm are found.
+// Windows apps get the full user PATH already; only add the usual places git, pnpm and bun install to.
 async function fixPath() {
+  if (IS_WIN) {
+    const pf = process.env.ProgramFiles || 'C:\\Program Files';
+    const extra = [path.join(pf, 'Git', 'cmd'), path.join(ROAMING, 'npm'), path.join(LOCAL, 'pnpm'), path.join(HOME, '.bun', 'bin'),
+      path.join(LOCAL, 'Programs', 'Git', 'cmd'), path.join(HOME, 'scoop', 'shims')];
+    const parts = [...(process.env.PATH || '').split(path.delimiter), ...extra];
+    process.env.PATH = [...new Set(parts.filter(Boolean))].join(path.delimiter);
+    return;
+  }
   const shellBin = process.env.SHELL || '/bin/zsh';
   // Read-only: prints PATH. Auto-updaters in shell configs are told not to run.
   const r = await run(shellBin, ['-ilc', 'printf "__CS_PATH__%s__CS_END__" "$PATH"'], {
@@ -57,18 +66,35 @@ async function fixPath() {
 }
 
 // ---------- window ----------
+// Windows: the app draws its own toolbar; Windows draws the minimize, maximize and close buttons over it,
+// in the toolbar's colors (the same as --window and --ink in renderer/styles.css).
+const winColors = () => (nativeTheme.shouldUseDarkColors
+  ? { color: '#1C1F25', symbolColor: '#E9ECF1' }
+  : { color: '#F6F7F9', symbolColor: '#1A2130' });
+const TOOLBAR_HEIGHT = 52;
+
 function createWindow() {
+  const chrome = IS_WIN
+    ? {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { ...winColors(), height: TOOLBAR_HEIGHT },
+      backgroundColor: winColors().color,
+      icon: path.join(__dirname, 'renderer', 'brand', 'icon.png'),
+    }
+    : {
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 18, y: 18 },
+      vibrancy: 'sidebar',
+      visualEffectState: 'followWindow',
+      backgroundColor: '#00000000',
+    };
   win = new BrowserWindow({
     width: 1120,
     height: 760,
     minWidth: 920,
     minHeight: 620,
     title: 'Clearspace',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 18 },
-    vibrancy: 'sidebar',
-    visualEffectState: 'followWindow',
-    backgroundColor: '#00000000',
+    ...chrome,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -82,16 +108,23 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 }
+if (IS_WIN) {
+  nativeTheme.on('updated', () => {
+    if (win && !win.isDestroyed()) { win.setTitleBarOverlay({ ...winColors(), height: TOOLBAR_HEIGHT }); win.setBackgroundColor(winColors().color); }
+  });
+}
 
+// On Windows the menu bar is hidden (the window has its own toolbar); the menu still provides the keyboard shortcuts,
+// and replaces Electron's default one, whose Ctrl+R would reload the window instead of scanning again.
 function buildMenu() {
   const template = [
-    { role: 'appMenu' },
+    ...(IS_WIN ? [] : [{ role: 'appMenu' }]),
     {
       label: 'File',
       submenu: [
         { label: 'Scan Again', accelerator: 'CmdOrCtrl+R', click: () => win && win.webContents.send('menu', 'rescan') },
         { type: 'separator' },
-        { role: 'close' },
+        IS_WIN ? { role: 'quit', label: 'Exit' } : { role: 'close' },
       ],
     },
     { role: 'editMenu' },
@@ -99,7 +132,7 @@ function buildMenu() {
       label: 'View',
       submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }],
     },
-    { role: 'windowMenu' },
+    ...(IS_WIN ? [] : [{ role: 'windowMenu' }]),
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -121,7 +154,7 @@ ipcMain.handle('settings:save', (_e, s) => {
   return next;
 });
 ipcMain.handle('history:get', () => readJSON(historyFile(), []));
-ipcMain.handle('disk:get', () => diskInfo(HOME));
+ipcMain.handle('disk:get', () => disksInfo(getSettings().projectRoots));
 
 ipcMain.handle('folder:pick', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: HOME, buttonLabel: 'Add folder' });
@@ -143,8 +176,9 @@ ipcMain.handle('reveal', (_e, p) => {
   if (ok) shell.showItemInFolder(p);
 });
 
-ipcMain.handle('open:fullDiskAccess', () =>
-  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'));
+ipcMain.handle('open:fullDiskAccess', () => {
+  if (!IS_WIN) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
+});
 
 let scanCounter = 0;
 ipcMain.handle('scan', async () => {
@@ -197,6 +231,12 @@ ipcMain.handle('clean', async (_e, ids, scanId) => {
 
 // ---------- lifecycle ----------
 app.setName('Clearspace');
+if (IS_WIN) app.setAppUserModelId('com.devripon.clearspace');
+// One window only: a second scan or clean from another copy of the app must not run at the same time.
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', () => {
+  if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.focus(); }
+});
 app.whenReady().then(async () => {
   await fixPath();
   buildMenu();

@@ -3,39 +3,56 @@ const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
 const { HOME, run, git, diskInfo, expandHome, readdirSafe, trackedState, findNestedGit } = require('./util');
-const { specById, DEV_CACHES } = require('./catalog');
+const { specById, DEV_CACHES, winAppCachePaths } = require('./catalog');
+const {
+  IS_WIN, DOWNLOADS, TRASH, BACKUPS, MAC_CACHES, LOGS, APP_DATA_NAME, WORDS, COPY_RE,
+  isInside, samePath, segmentsBelow, systemProtected, rootProblem, areaBase, inSystemArea,
+} = require('./platform');
+const { emptyRecycleBin } = require('./recyclebin');
 const { assessWorktree, backupHistory } = require('./worktree');
 const kinds = require('./kinds');
 
-const CACHES = path.join(HOME, 'Library', 'Caches');
-const DOWNLOADS = path.join(HOME, 'Downloads');
-const TRASH = path.join(HOME, '.Trash');
-const BACKUPS = path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup');
-
-/** Folders that must never be removed or emptied themselves, whatever an item says. */
+/**
+ * Folders that must never be removed or emptied themselves, whatever an item says.
+ * Also carries `projectRoots`: on Windows, project folders on other drives (D:\code) are allowed places to clean.
+ */
 function protectedSet(projectRoots) {
-  const s = new Set(['/', HOME, path.join(HOME, 'Library'), CACHES, DOWNLOADS, TRASH,
-    path.join(HOME, 'Desktop'), path.join(HOME, 'Documents'), path.join(HOME, '.cache'),
-    path.join(HOME, 'Library', 'Application Support'), path.join(HOME, 'Library', 'Mobile Documents'),
-    path.join(HOME, 'Library', 'CloudStorage'), path.join(HOME, '.ssh'), path.join(HOME, '.config'),
-    BACKUPS, path.dirname(BACKUPS), path.join(HOME, '.cargo'), path.join(HOME, '.m2'), path.join(HOME, '.gradle')]);
+  const s = new Set(systemProtected());
+  const roots = [];
   for (const r of projectRoots || []) {
     const abs = path.resolve(expandHome(r));
     s.add(abs);
-    try { s.add(fs.realpathSync.native(abs)); } catch {}
+    roots.push(abs);
+    try { const real = fs.realpathSync.native(abs); s.add(real); roots.push(real); } catch {}
   }
+  s.projectRoots = roots;
   return s;
 }
 
-const isInside = (child, parent) => child !== parent && child.startsWith(parent.endsWith('/') ? parent : parent + '/');
+/** Protected, comparing the way the file system does (without letter case on Windows), and never a whole drive. */
+const isProtected = (protectedPaths, n) => (IS_WIN
+  ? path.parse(n).root === n || [...protectedPaths].some((x) => samePath(x, n))
+  : protectedPaths.has(n));
+
+/** Where a target may be: inside home, or (Windows) inside a project folder that passes the same checks as at scan time. */
+const PROJECT_CATEGORIES = new Set(['build', 'deps', 'leftovers']);
+function allowedPlace(item, n, protectedPaths) {
+  if (isInside(n, HOME)) return true;
+  if (!IS_WIN) return false;
+  if (item.action === 'pnpm-prune') return true; // pnpm keeps a store per drive; the path is only measured, never touched
+  return PROJECT_CATEGORIES.has(item.category)
+    && (protectedPaths.projectRoots || []).some((r) => !rootProblem(r) && isInside(n, r));
+}
 
 /** Project-type targets (build caches, node_modules, worktrees, copies) never live in these places. */
 const AGENT_DIRS = new Set(['.claude', '.codex', '.conductor']);
 function inToolArea(n) {
-  const rel = n.slice(HOME.length + 1).split('/');
+  const base = areaBase(n);
+  const rel = segmentsBelow(n, base);
   const parents = rel.slice(0, -1); // the target itself may be hidden (.next, .turbo)
-  return rel[0].toLowerCase() === 'library'
-    || parents.some((seg) => seg.startsWith('.') && !AGENT_DIRS.has(seg))
+  return (base === HOME && rel[0].toLowerCase() === APP_DATA_NAME.toLowerCase())
+    || parents.some((seg) => (seg.startsWith('.') && !AGENT_DIRS.has(seg)) || (IS_WIN && seg.startsWith('$')))
+    || (base !== HOME && inSystemArea(rel))
     || rel.some((seg) => seg.endsWith('.app'));
 }
 
@@ -46,15 +63,18 @@ function inToolArea(n) {
 async function check(item, p, protectedPaths) {
   if (typeof p !== 'string' || !path.isAbsolute(p)) return { why: 'Path is not absolute' };
   const n = path.resolve(p);
-  if (n !== p.replace(/\/+$/, '')) return { why: 'Path is not normalized' };
+  if (n !== p.replace(IS_WIN ? /[\\/]+$/ : /\/+$/, '')) return { why: 'Path is not normalized' };
   if (item.action === 'empty-trash') {
-    if (n !== TRASH) return { why: 'Unexpected Trash path' };
+    if (n !== TRASH) return { why: `Unexpected ${WORDS.trash} path` };
+    // Windows empties the Recycle Bin itself (SHEmptyRecycleBin); Clearspace never deletes inside $Recycle.Bin.
+    if (IS_WIN) return { why: null, st: null };
   } else {
-    if (!isInside(n, HOME)) return { why: 'Outside your home folder' };
-    if (protectedPaths.has(n)) return { why: 'Protected folder' };
+    if (!allowedPlace(item, n, protectedPaths)) return { why: 'Outside your home folder and your project folders' };
+    if (isProtected(protectedPaths, n)) return { why: 'Protected folder' };
   }
   let st;
-  try { st = await fsp.lstat(n); } catch { return { why: 'gone' }; }
+  // bigint: Windows file ids are 64-bit and must compare exactly (see stillSame).
+  try { st = await fsp.lstat(n, { bigint: true }); } catch { return { why: 'gone' }; }
   if (st.isSymbolicLink()) return { why: 'Is a symbolic link' };
   // No symbolic link anywhere along the path (a linked parent could redirect the delete).
   try {
@@ -68,7 +88,7 @@ async function check(item, p, protectedPaths) {
     switch (item.category) {
       case 'build':
       case 'deps': {
-        if (inToolArea(n)) return 'Inside an app, Library or hidden tool folder';
+        if (inToolArea(n)) return `Inside an app, ${APP_DATA_NAME} or hidden tool folder`;
         // The exact kind the scan matched must still match now: name, project files next to it, contents.
         const spec = specById(item.kindId || (item.category === 'deps' ? 'node-modules' : ''));
         if (!spec || spec.category !== item.category) return 'Unknown kind of project folder';
@@ -91,9 +111,9 @@ async function check(item, p, protectedPaths) {
         return await projectFolderStillDisposable(parent, base, n, protectedPaths, spec);
       }
       case 'leftovers': {
-        if (inToolArea(n)) return 'Inside an app, Library or hidden tool folder';
+        if (inToolArea(n)) return `Inside an app, ${APP_DATA_NAME} or hidden tool folder`;
         if (item.group === 'duplicate') {
-          return item.action === 'trash' && / copy(?: \d+)?$/.test(base) ? null : 'Not a duplicate copy folder';
+          return item.action === 'trash' && COPY_RE.test(base) ? null : 'Not a duplicate copy folder';
         }
         if (path.basename(parent) !== 'worktrees') return 'Not in a worktrees folder';
         const a = await assessWorktree(n);
@@ -106,23 +126,25 @@ async function check(item, p, protectedPaths) {
       case 'pkg': {
         if (item.key === 'dot-cache') {
           const dc = path.join(HOME, '.cache');
-          return (parent === dc || n === path.join(dc, 'huggingface', 'hub')) ? null : 'Not a ~/.cache tool folder';
+          return (samePath(parent, dc) || samePath(n, path.join(dc, 'huggingface', 'hub'))) ? null : 'Not a ~/.cache tool folder';
         }
         if (item.key === 'pnpm-prune') return null;
         const known = DEV_CACHES.find((c) => c.key === item.key);
-        if (!known) return 'Unknown developer cache';
-        return path.resolve(expandHome(known.path)) === n ? null : 'Developer cache path changed';
+        if (!known || !known.path) return 'Unknown developer cache';
+        return samePath(path.resolve(expandHome(known.path)), n) ? null : 'Developer cache path changed';
       }
       case 'apps':
-        if (n === path.join(HOME, 'Library', 'Logs')) return null;
-        return parent === CACHES ? null : 'Not an app cache folder';
+        if (samePath(n, LOGS)) return null;
+        // Windows: only cache folders found at their exact known location, looked up again now.
+        if (IS_WIN) return winAppCachePaths().some((c) => samePath(c.path, n)) ? null : 'Not a known app cache folder';
+        return parent === MAC_CACHES ? null : 'Not an app cache folder';
       case 'files':
         if (item.action === 'empty-trash') return null;
         if (item.group === 'backup') {
-          if (parent !== BACKUPS || item.action !== 'trash') return 'Not a device backup folder';
+          if (!BACKUPS.some((b) => samePath(b, parent)) || item.action !== 'trash') return 'Not a device backup folder';
           return fs.existsSync(path.join(n, 'Info.plist')) ? null : 'Does not look like a device backup any more';
         }
-        return parent === DOWNLOADS && item.action === 'trash' ? null : 'Not in Downloads';
+        return samePath(parent, DOWNLOADS) && item.action === 'trash' ? null : 'Not in Downloads';
       default:
         return 'Unknown category';
     }
@@ -132,7 +154,10 @@ async function check(item, p, protectedPaths) {
 
 /** Same checks the scan made, repeated right before cleaning: not tracked by git, no git repository inside. */
 async function projectFolderStillDisposable(parent, base, n, protectedPaths, spec) {
-  const root = [...protectedPaths].filter((r) => isInside(n, r) && r !== HOME && r !== '/').sort((a, b) => b.length - a.length)[0] || parent;
+  // The project folder it is in (a whole data drive counts when it is a project folder; '/' and C: never do).
+  const isRoot = (r) => (protectedPaths.projectRoots || []).some((x) => samePath(x, r));
+  const root = [...protectedPaths].filter((r) => isInside(n, r) && !samePath(r, HOME) && (path.parse(r).root !== r || isRoot(r)))
+    .sort((a, b) => b.length - a.length)[0] || parent;
   if ((await trackedState(parent, base, root)) !== 'untracked') return 'Git tracks it, or git could not check it';
   const nested = await kinds.nestedGit(spec || {}, n, { findNestedGit });
   if (nested === 'TOO_BIG') return 'Too large to check for git repositories inside';
@@ -148,14 +173,14 @@ async function verify(item, p, protectedPaths) {
 /** True when `p` is still the very same real folder that was checked (closes swap-in-a-symlink races). */
 async function stillSame(p, st) {
   try {
-    const now = await fsp.lstat(p);
+    const now = await fsp.lstat(p, { bigint: typeof st.ino === 'bigint' });
     if (now.isSymbolicLink() || now.dev !== st.dev || now.ino !== st.ino) return false;
     return (await fsp.realpath(p)) === p;
   } catch { return false; }
 }
 
 const friendly = (err) => (['EPERM', 'EACCES', 'ENOTDIR', 'ENOTEMPTY'].includes(err.code)
-  ? `macOS did not allow removing some files (${err.code}).`
+  ? `${WORDS.os} did not allow removing some files (${err.code}).${IS_WIN ? ' Some may be open in an app.' : ''}`
   : err.code === 'EBUSY' ? 'Some files are in use.' : (err.message || String(err)));
 
 async function rmrf(p, st) {
@@ -191,13 +216,28 @@ async function removeWorktree(wt) {
   return saved;
 }
 
+/** The disks to measure: home's first, then (Windows) every other drive an item is on; all drives for the Recycle Bin. */
+function cleanedVolumes(items) {
+  if (!IS_WIN) return [HOME];
+  const home = path.parse(HOME).root.toUpperCase();
+  const drives = new Set([home]);
+  for (const it of items) {
+    if (it.action === 'empty-trash') {
+      for (let c = 67; c <= 90; c++) { const d = `${String.fromCharCode(c)}:\\`; if (fs.existsSync(d)) drives.add(d); }
+    } else for (const p of it.paths) drives.add(path.parse(p).root.toUpperCase());
+  }
+  return [...drives].map((d) => (d === home ? HOME : d));
+}
+
 /**
  * Clean the given items (already chosen by the user from the latest scan).
  * deps: { trash(path) -> Promise, projectRoots }
  */
 async function clean(items, deps, onProgress) {
   const protectedPaths = protectedSet(deps.projectRoots);
-  const before = await diskInfo(HOME);
+  // Free space is measured on every disk that cleaning touches (on Windows, projects often live on D:).
+  const volumes = cleanedVolumes(items);
+  const before = await Promise.all(volumes.map((v) => diskInfo(v)));
   const results = [];
 
   // Skip items that sit inside another selected item: cleaning the outer one covers them.
@@ -229,8 +269,10 @@ async function clean(items, deps, onProgress) {
         if (why) { problems.push(why); continue; }
         switch (it.action) {
           case 'delete': await rmrf(p, st); break;
-          case 'empty':
-          case 'empty-trash': {
+          case 'empty-trash':
+            if (IS_WIN) { await (deps.emptyTrash || emptyRecycleBin)(); break; }
+          // falls through: on macOS the Trash is a folder in home, emptied like any other
+          case 'empty': {
             const r = await emptyDir(p, st);
             if (r.failed) {
               partial = it.action === 'empty-trash' && r.failed === r.total
@@ -275,12 +317,14 @@ async function clean(items, deps, onProgress) {
   }
 
   await new Promise((r) => setTimeout(r, 800)); // let APFS settle its free-space count
-  const after = await diskInfo(HOME);
+  const after = await Promise.all(volumes.map((v) => diskInfo(v)));
+  const measured = before.every(Boolean) && after.every(Boolean);
   return {
     results,
-    before,
-    after,
-    freed: before && after ? Math.max(0, after.free - before.free) : null,
+    before: before[0],
+    after: after[0],
+    volumes: volumes.map((v, k) => ({ name: v, before: before[k], after: after[k] })),
+    freed: measured ? volumes.reduce((a, _, k) => a + Math.max(0, after[k].free - before[k].free), 0) : null,
     estimated: items.filter((it) => results.find((r) => r.id === it.id && r.status === 'done')).reduce((a, it) => a + (it.size || 0), 0),
     finishedAt: Date.now(),
   };

@@ -2,10 +2,11 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const fsp = fs.promises;
-const os = require('os');
 const path = require('path');
+const { HOME, IS_WIN, within, diskName } = require('./platform');
 
-const HOME = os.homedir();
+// On Windows, package managers installed with npm are .cmd scripts, which only a shell can start.
+const WIN_SHIMS = /^(pnpm|npm|npx|yarn)$/;
 
 /** Run a command, resolve { code, stdout, stderr }. Never throws. */
 function run(cmd, args, opts = {}) {
@@ -14,11 +15,15 @@ function run(cmd, args, opts = {}) {
     let stderr = '';
     let done = false;
     let child;
+    // Only fixed commands with fixed arguments (pnpm store prune) go through the shell: nothing a user typed reaches it.
+    const viaShell = IS_WIN && WIN_SHIMS.test(cmd) && args.every((a) => /^[\w.-]+$/.test(a));
     try {
-      child = spawn(cmd, args, {
+      child = spawn(viaShell ? [cmd, ...args].join(' ') : cmd, viaShell ? [] : args, {
         cwd: opts.cwd,
         env: { ...process.env, ...(opts.env || {}) },
         stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        shell: viaShell,
       });
     } catch (e) {
       resolve({ code: -1, stdout: '', stderr: String(e) });
@@ -134,13 +139,63 @@ async function trackedState(parent, name, stopAt) {
   return ls.trim() ? 'tracked' : 'untracked';
 }
 
-/** Size on disk in bytes using `du -sk` (native, fast on APFS). Returns null when unknown. */
+/** Size on disk in bytes: `du -sk` on macOS (native, fast on APFS), a file walk on Windows. Returns null when unknown. */
 async function diskUsage(p, timeout = 180000) {
+  if (IS_WIN) return walkSize(p, timeout);
   const r = await run('du', ['-sk', p], { timeout });
   // du exits 1 when some subfolders are unreadable but still prints a total.
   const m = /^(\d+)\s/.exec(r.stdout);
   if (!m) return null;
   return Number(m[1]) * 1024;
+}
+
+/**
+ * Total size of the files under `p` (Windows has no du). Never follows links or junctions, counts hard-linked
+ * files once (pnpm links packages from its store), skips what it cannot read. Null when it cannot finish in time.
+ */
+async function walkSize(p, timeout) {
+  const deadline = Date.now() + timeout;
+  let st;
+  try { st = await fsp.lstat(p, { bigint: true }); } catch { return null; }
+  if (st.isSymbolicLink()) return 0;
+  if (!st.isDirectory()) return Number(st.size);
+  let total = 0n;
+  const seen = new Set();
+  const queue = [p];
+  let active = 0;
+  let late = false;
+  await new Promise((resolve) => {
+    const pump = () => {
+      if (late) return;
+      if (Date.now() > deadline) { late = true; resolve(); return; }
+      if (!queue.length && !active) { resolve(); return; }
+      while (active < 16 && queue.length) {
+        const dir = queue.pop();
+        active++;
+        (async () => {
+          const files = [];
+          for (const e of await readdirSafe(dir)) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory() && !e.isSymbolicLink()) queue.push(full);
+            else if (e.isFile()) files.push(full);
+          }
+          await Promise.all(files.map(async (f) => {
+            try {
+              const s = await fsp.lstat(f, { bigint: true });
+              if (s.nlink > 1n) {
+                const id = `${s.dev}:${s.ino}`;
+                if (seen.has(id)) return;
+                seen.add(id);
+              }
+              total += s.size;
+            } catch {}
+          }));
+        })().finally(() => { active--; pump(); });
+      }
+    };
+    pump();
+  });
+  return late ? null : Number(total);
 }
 
 /** Run async fn over items with limited concurrency. */
@@ -173,13 +228,13 @@ async function readdirSafe(p) {
 }
 
 function tilde(p) {
-  return p.startsWith(HOME) ? '~' + p.slice(HOME.length) : p;
+  return within(p, HOME) ? '~' + p.slice(HOME.length) : p;
 }
 
 function expandHome(p) {
   if (!p) return p;
   if (p === '~') return HOME;
-  if (p.startsWith('~/')) return path.join(HOME, p.slice(2));
+  if (p.startsWith('~/') || (IS_WIN && p.startsWith('~\\'))) return path.join(HOME, p.slice(2));
   return p;
 }
 
@@ -195,10 +250,30 @@ async function diskInfo(p = HOME) {
   }
 }
 
+/**
+ * Totals for home's disk, then (Windows) every other drive that holds a project folder, each with its `root`
+ * and a `name` to show. The first entry carries the whole list as `all`.
+ */
+async function disksInfo(projectRoots = []) {
+  const roots = [path.parse(HOME).root.toUpperCase()];
+  if (IS_WIN) {
+    for (const r of projectRoots) {
+      const root = path.parse(path.resolve(expandHome(r))).root.toUpperCase();
+      if (!roots.includes(root)) roots.push(root);
+    }
+  }
+  const all = [];
+  for (const [k, root] of roots.entries()) {
+    const d = await diskInfo(k === 0 ? HOME : root);
+    if (d) all.push({ ...d, root: IS_WIN ? root : null, name: diskName(k === 0 ? HOME : root) });
+  }
+  return all.length ? { ...all[0], all } : null;
+}
+
 /** Newest modification time (ms) of files in a project, ignoring generated folders. Shallow + bounded. */
 const IGNORE_FOR_ACTIVITY = new Set([
   'node_modules', '.git', '.next', '.turbo', '.nuxt', '.svelte-kit', '.parcel-cache',
-  '.vite', '.cache', 'dist', 'build', 'out', 'coverage', '.vercel', '.expo', '.claude', '.DS_Store',
+  '.vite', '.cache', 'dist', 'build', 'out', 'coverage', '.vercel', '.expo', '.claude', '.DS_Store', 'Thumbs.db', 'desktop.ini',
   // output and installed packages of other stacks: tools write here, people do not
   'target', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox', 'Pods', 'vendor',
   '.gradle', '.build', '.dart_tool', '_build', 'deps', 'cmake-build-debug', 'cmake-build-release', '.zig-cache', 'zig-cache',
@@ -242,7 +317,7 @@ async function lastActivity(dir, maxDepth = 7, budget = { n: 8000 }) {
       rels.push(t.slice(3));
       if (t[0] === 'R' || t[0] === 'C') i++; // skip the old name
     }
-    const changed = rels.map((rel) => path.join(root, rel)).filter((p) => p === dir || p.startsWith(dir + '/'));
+    const changed = rels.map((rel) => path.join(root, rel)).filter((p) => within(p, dir));
     for (const p of changed) {
       try { const m = (await fsp.lstat(p)).mtimeMs; if (m > newest) newest = m; } catch {}
     }
@@ -251,5 +326,5 @@ async function lastActivity(dir, maxDepth = 7, budget = { n: 8000 }) {
 }
 
 module.exports = {
-  HOME, run, git, findNestedGit, trackedState, diskUsage, pool, exists, isRealDir, readdirSafe, tilde, expandHome, diskInfo, lastActivity,
+  HOME, run, walkSize, git, findNestedGit, trackedState, diskUsage, pool, exists, isRealDir, readdirSafe, tilde, expandHome, diskInfo, disksInfo, lastActivity,
 };

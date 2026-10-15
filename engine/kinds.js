@@ -5,7 +5,12 @@
  */
 const path = require('path');
 const fsp = require('fs').promises;
+const { fileURLToPath } = require('url');
 const { readdirSafe, git } = require('./util');
+const { IS_WIN, within } = require('./platform');
+
+/** Files Finder and File Explorer add to any folder by themselves. */
+const JUNK = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
 
 /** True when the folder holds what this kind of tool output always contains. */
 async function insideOk(spec, dir) {
@@ -68,7 +73,7 @@ async function ignoredByGit(parent, name) {
 const readText = async (p) => { try { return await fsp.readFile(p, 'utf8'); } catch { return null; } };
 const dirNames = async (d) => (await readdirSafe(d)).filter((e) => e.isDirectory() && !e.isSymbolicLink()).map((e) => e.name);
 
-const VENV_TOP = new Set(['bin', 'lib', 'lib64', 'include', 'share', 'pyvenv.cfg', 'Lib', 'Scripts', '.gitignore', 'CACHEDIR.TAG', '.lock', 'etc', 'man', 'src', '.DS_Store']);
+const VENV_TOP = new Set(['bin', 'lib', 'lib64', 'include', 'share', 'pyvenv.cfg', 'Lib', 'Scripts', 'Include', '.gitignore', 'CACHEDIR.TAG', '.lock', 'etc', 'man', 'src', ...JUNK]);
 const PODS_OWN = new Set(['Pods.xcodeproj', 'Target Support Files', 'Headers', 'Local Podspecs', 'Manifest.lock']);
 const files = async (d) => (await readdirSafe(d)).filter((e) => !e.isDirectory()).map((e) => e.name);
 
@@ -86,11 +91,11 @@ async function contents(spec, dir) {
       try { const j = JSON.parse(raw); pkgs = (Array.isArray(j) ? j : j.packages || []).map((p) => String(p.name || '').toLowerCase()); } catch {}
       if (!pkgs) return { lock: null, check: 'Composer\'s list of installed packages (vendor/composer/installed.json) is missing, so Clearspace cannot confirm everything in vendor came from Composer.' };
       const known = new Set(pkgs);
-      const own = (await files(dir)).find((f) => f !== 'autoload.php' && f !== '.DS_Store');
+      const own = (await files(dir)).find((f) => f !== 'autoload.php' && !JUNK.has(f));
       if (own) return { lock: `vendor/${own} is not something Composer installed. It may be your own file, so Clearspace will not remove this folder.`, check: null };
       // vendor/bin holds links or small proxy scripts that point into an installed package.
       for (const b of await readdirSafe(path.join(dir, 'bin'))) {
-        if (b.isSymbolicLink() || b.name === '.DS_Store') continue;
+        if (b.isSymbolicLink() || JUNK.has(b.name)) continue;
         const txt = (await readText(path.join(dir, 'bin', b.name))) || '';
         if (b.isDirectory() || !pkgs.some((pk) => txt.slice(0, 4096).toLowerCase().includes(pk))) {
           return { lock: `vendor/bin/${b.name} does not point to a package Composer installed. It may be your own script, so Clearspace will not remove this folder.`, check: null };
@@ -98,7 +103,7 @@ async function contents(spec, dir) {
       }
       for (const v of await dirNames(dir)) {
         if (v === 'composer' || v === 'bin') continue;
-        const loose = (await files(path.join(dir, v))).find((f) => f !== '.DS_Store');
+        const loose = (await files(path.join(dir, v))).find((f) => !JUNK.has(f));
         if (loose) return { lock: `vendor/${v}/${loose} is not part of a package Composer installed. It may be your own file, so Clearspace will not remove this folder.`, check: null };
         const subs = await dirNames(path.join(dir, v));
         const extra = subs.find((s) => !known.has(`${v}/${s}`.toLowerCase())) || (subs.length ? null : v);
@@ -122,7 +127,7 @@ async function contents(spec, dir) {
       if (!raw) return { lock: 'There is no mix.lock, so Clearspace cannot confirm these folders came from Mix.', check: null };
       const names = new Set([...raw.matchAll(/^\s*"([^"]+)"\s*:/gm)].map((m) => m[1]));
       for (const e of await readdirSafe(dir)) {
-        if (e.name === '.DS_Store') continue;
+        if (JUNK.has(e.name)) continue;
         if (!e.isDirectory() || !names.has(e.name)) return { lock: `deps/${e.name} is not listed in mix.lock. It may be your own code, so Clearspace will not remove this folder.`, check: null };
       }
       return { lock: null, check: null };
@@ -175,97 +180,116 @@ async function lockedPackages(projectDir) {
   return null;
 }
 
+/**
+ * Where a virtual environment keeps its packages: lib/pythonX.Y/site-packages (macOS, Linux), or Lib/site-packages
+ * for environments created on Windows. `container` is the folder that may hold nothing but site-packages.
+ */
+async function sitePackages(dir) {
+  if (IS_WIN) {
+    const lib = path.join(dir, 'Lib');
+    let st = null;
+    try { st = await fsp.lstat(path.join(lib, 'site-packages')); } catch {}
+    if (st && st.isDirectory() && !st.isSymbolicLink()) return { windows: true, dirs: [{ sp: path.join(lib, 'site-packages'), container: lib }] };
+  }
+  const dirs = [];
+  for (const lib of ['lib', 'lib64']) {
+    for (const py of await dirNames(path.join(dir, lib))) {
+      dirs.push({ sp: path.join(dir, lib, py, 'site-packages'), container: path.join(dir, lib, py) });
+    }
+  }
+  return { windows: false, dirs };
+}
+
 async function venvEdits(dir) {
   let budget = 120000;
   const project = path.dirname(dir);
   const lock = await lockedPackages(project);
   const listedOutside = new Set(); // files RECORD lists outside site-packages (scripts in bin/, headers in include/, data in share/)
-  for (const lib of ['lib', 'lib64']) {
-    for (const py of await dirNames(path.join(dir, lib))) {
-      const sp = path.join(dir, lib, py, 'site-packages');
-      const claimed = new Set(['__pycache__', '.DS_Store', '_virtualenv.py', '_virtualenv.pth', 'distutils-precedence.pth', 'README.txt']);
-      const infos = (await dirNames(sp)).filter((d) => d.endsWith('.dist-info'));
-      const listed = new Set();
-      for (const info of infos) {
-        claimed.add(info);
-        // Installed by hand? Not pinned by the lockfile, or installed from a local folder or a git URL the lockfile does not name.
-        const name = pkgName(info.replace(/\.dist-info$/, '').split('-')[0]);
-        const where = path.relative(project, path.join(sp, info));
-        const du = await readText(path.join(sp, info, 'direct_url.json'));
-        const isSelf = Boolean(lock && lock.self === name && du && du.includes('file:'));
-        if (lock && !SEEDED.has(name) && !lock.names.has(name) && !isSelf) return { changed: where, unknown: false, why: 'not-locked' };
-        if (du) {
-          let j = null;
-          try { j = JSON.parse(du); } catch {}
-          const url = j && typeof j.url === 'string' ? j.url : '';
-          if (url.startsWith('file:')) {
-            let local = '';
-            try { local = decodeURIComponent(new URL(url).pathname); } catch {}
-            if (!(local === project || local.startsWith(project + '/'))) return { changed: where, unknown: false, why: 'local-source' };
-          } else if (j && j.vcs_info && !(lock && lock.text.includes(url.replace(/^git\+/, '')))) {
-            return { changed: where, unknown: false, why: 'local-source' };
-          }
-        }
-        const recPath = path.join(sp, info, 'RECORD');
-        const rec = await readText(recPath);
-        if (rec === null) return { changed: path.relative(path.dirname(dir), path.join(sp, info)), unknown: false };
-        let recTime = 0;
-        try { recTime = (await fsp.stat(recPath)).mtimeMs; } catch {}
-        for (const line of rec.split('\n')) {
-          if (!line.trim()) continue;
-          const parts = line.split(',');
-          const size = parts.pop();
-          parts.pop(); // hash
-          const rel = parts.join(',').replace(/^"|"$/g, '');
-          if (!rel) continue;
-          if (rel.startsWith('..')) {
-            // Scripts and data a package put outside site-packages (bin/, share/): same size and date checks.
-            const abs = path.resolve(sp, rel);
-            listedOutside.add(abs);
-            let st2 = null;
-            try { st2 = await fsp.lstat(abs); } catch {}
-            if (st2 && !st2.isSymbolicLink() && ((size && Number(size) !== st2.size) || st2.mtimeMs > recTime + 120000)) {
-              return { changed: path.relative(path.dirname(dir), abs), unknown: false };
-            }
-            continue;
-          }
-          claimed.add(rel.split('/')[0]);
-          listed.add(rel);
-          if (rel.endsWith('.pyc') || rel.endsWith('/RECORD')) continue;
-          if (--budget <= 0) return { changed: null, unknown: true };
-          let st;
-          try { st = await fsp.lstat(path.join(sp, rel)); } catch { continue; } // removed files lose nothing
-          if ((size && Number(size) !== st.size) || st.mtimeMs > recTime + 120000) {
-            return { changed: path.relative(path.dirname(dir), path.join(sp, rel)), unknown: false };
-          }
+  const layout = await sitePackages(dir);
+  for (const { sp, container } of layout.dirs) {
+    const claimed = new Set(['__pycache__', ...JUNK, '_virtualenv.py', '_virtualenv.pth', 'distutils-precedence.pth', 'README.txt']);
+    const infos = (await dirNames(sp)).filter((d) => d.endsWith('.dist-info'));
+    const listed = new Set();
+    for (const info of infos) {
+      claimed.add(info);
+      // Installed by hand? Not pinned by the lockfile, or installed from a local folder or a git URL the lockfile does not name.
+      const name = pkgName(info.replace(/\.dist-info$/, '').split('-')[0]);
+      const where = path.relative(project, path.join(sp, info));
+      const du = await readText(path.join(sp, info, 'direct_url.json'));
+      const isSelf = Boolean(lock && lock.self === name && du && du.includes('file:'));
+      if (lock && !SEEDED.has(name) && !lock.names.has(name) && !isSelf) return { changed: where, unknown: false, why: 'not-locked' };
+      if (du) {
+        let j = null;
+        try { j = JSON.parse(du); } catch {}
+        const url = j && typeof j.url === 'string' ? j.url : '';
+        if (url.startsWith('file:')) {
+          let local = '';
+          try { local = fileURLToPath(url); } catch {}
+          if (!local || !within(local, project)) return { changed: where, unknown: false, why: 'local-source' };
+        } else if (j && j.vcs_info && !(lock && lock.text.includes(url.replace(/^git\+/, '')))) {
+          return { changed: where, unknown: false, why: 'local-source' };
         }
       }
-      const unclaimed = (await readdirSafe(sp)).map((e) => e.name).find((n) => !claimed.has(n) && !n.endsWith('.egg-info') && !n.endsWith('.pth'));
-      if (unclaimed) return { changed: path.relative(path.dirname(dir), path.join(sp, unclaimed)), unknown: false };
-      // Files added by hand inside an installed package: present on disk but in no RECORD.
-      let level = [...claimed].filter((n) => !n.endsWith('.dist-info') && n !== '__pycache__').map((n) => path.join(sp, n));
-      for (let depth = 0; depth < 12 && level.length; depth++) {
-        const next = [];
-        for (const d of level) {
-          for (const e of await readdirSafe(d)) {
-            if (--budget <= 0) return { changed: null, unknown: true };
-            if (e.name === '__pycache__' || e.name.endsWith('.pyc') || e.name === '.DS_Store') continue;
-            const full = path.join(d, e.name);
-            if (e.isDirectory() && !e.isSymbolicLink()) { next.push(full); continue; }
-            if (!listed.has(path.relative(sp, full))) return { changed: path.relative(path.dirname(dir), full), unknown: false };
+      const recPath = path.join(sp, info, 'RECORD');
+      const rec = await readText(recPath);
+      if (rec === null) return { changed: path.relative(path.dirname(dir), path.join(sp, info)), unknown: false };
+      let recTime = 0;
+      try { recTime = (await fsp.stat(recPath)).mtimeMs; } catch {}
+      for (const line of rec.split('\n')) {
+        if (!line.trim()) continue;
+        const parts = line.split(',');
+        const size = parts.pop();
+        parts.pop(); // hash
+        const rel = parts.join(',').replace(/^"|"$/g, '');
+        if (!rel) continue;
+        if (rel.startsWith('..')) {
+          // Scripts and data a package put outside site-packages (bin/, share/): same size and date checks.
+          const abs = path.resolve(sp, rel);
+          listedOutside.add(abs);
+          let st2 = null;
+          try { st2 = await fsp.lstat(abs); } catch {}
+          if (st2 && !st2.isSymbolicLink() && ((size && Number(size) !== st2.size) || st2.mtimeMs > recTime + 120000)) {
+            return { changed: path.relative(path.dirname(dir), abs), unknown: false };
           }
+          continue;
         }
-        level = next;
+        claimed.add(rel.split('/')[0]);
+        listed.add(rel);
+        if (rel.endsWith('.pyc') || rel.endsWith('/RECORD')) continue;
+        if (--budget <= 0) return { changed: null, unknown: true };
+        let st;
+        try { st = await fsp.lstat(path.join(sp, rel)); } catch { continue; } // removed files lose nothing
+        if ((size && Number(size) !== st.size) || st.mtimeMs > recTime + 120000) {
+          return { changed: path.relative(path.dirname(dir), path.join(sp, rel)), unknown: false };
+        }
       }
-      // Nothing else belongs next to site-packages.
-      const besides = (await readdirSafe(path.join(dir, lib, py))).map((e) => e.name).find((n) => n !== 'site-packages' && n !== '.DS_Store');
-      if (besides) return { changed: path.relative(path.dirname(dir), path.join(dir, lib, py, besides)), unknown: false };
     }
+    const unclaimed = (await readdirSafe(sp)).map((e) => e.name).find((n) => !claimed.has(n) && !n.endsWith('.egg-info') && !n.endsWith('.pth'));
+    if (unclaimed) return { changed: path.relative(path.dirname(dir), path.join(sp, unclaimed)), unknown: false };
+    // Files added by hand inside an installed package: present on disk but in no RECORD.
+    let level = [...claimed].filter((n) => !n.endsWith('.dist-info') && n !== '__pycache__').map((n) => path.join(sp, n));
+    for (let depth = 0; depth < 12 && level.length; depth++) {
+      const next = [];
+      for (const d of level) {
+        for (const e of await readdirSafe(d)) {
+          if (--budget <= 0) return { changed: null, unknown: true };
+          if (e.name === '__pycache__' || e.name.endsWith('.pyc') || JUNK.has(e.name)) continue;
+          const full = path.join(d, e.name);
+          if (e.isDirectory() && !e.isSymbolicLink()) { next.push(full); continue; }
+          // RECORD always uses forward slashes.
+          if (!listed.has(path.relative(sp, full).split(path.sep).join('/'))) return { changed: path.relative(path.dirname(dir), full), unknown: false };
+        }
+      }
+      level = next;
+    }
+    // Nothing else belongs next to site-packages.
+    const besides = (await readdirSafe(container)).map((e) => e.name).find((n) => n !== 'site-packages' && !JUNK.has(n));
+    if (besides) return { changed: path.relative(path.dirname(dir), path.join(container, besides)), unknown: false };
   }
-  // lib/ and lib64/ hold only the pythonX.Y folders.
-  for (const lib of ['lib', 'lib64']) {
+  // lib/ and lib64/ hold only the pythonX.Y folders (the Windows layout was checked above: Lib holds only site-packages).
+  for (const lib of layout.windows ? [] : ['lib', 'lib64']) {
     for (const e of await readdirSafe(path.join(dir, lib))) {
-      if (e.name === '.DS_Store' || (e.isDirectory() && !e.isSymbolicLink() && /^python\d/.test(e.name))) continue;
+      if (JUNK.has(e.name) || (e.isDirectory() && !e.isSymbolicLink() && /^python\d/.test(e.name))) continue;
       return { changed: path.relative(project, path.join(dir, lib, e.name)), unknown: false };
     }
   }
@@ -279,7 +303,7 @@ async function venvEdits(dir) {
       for (const d of level) {
         for (const e of await readdirSafe(d)) {
           if (--budget <= 0) return { changed: null, unknown: true };
-          if (e.name === '.DS_Store' || e.name === '__pycache__') continue;
+          if (JUNK.has(e.name) || e.name === '__pycache__') continue;
           const full = path.join(d, e.name);
           if (e.isDirectory() && !e.isSymbolicLink()) { next.push(full); continue; }
           if (listedOutside.has(full)) continue;
@@ -310,7 +334,7 @@ async function changedAfterInstall(spec, dir) {
   } else return { changed: null, unknown: false };
   if (!record) return { changed: null, unknown: true };
 
-  const SKIP = new Set(['__pycache__', '.DS_Store', 'composer']); // Python byte-code and Composer's autoloader are rewritten by the tools
+  const SKIP = new Set(['__pycache__', ...JUNK, 'composer']); // Python byte-code and Composer's autoloader are rewritten by the tools
   let budget = 60000;
   let level = [dir];
   for (let depth = 0; depth < 12 && level.length; depth++) {
@@ -336,7 +360,7 @@ async function changedAfterInstall(spec, dir) {
 async function unexpectedTop(spec, dir) {
   if (!spec.knownTop) return null;
   for (const e of await readdirSafe(dir)) {
-    if (e.name === '.DS_Store') continue;
+    if (JUNK.has(e.name)) continue;
     if (spec.knownTop.some((k) => (k instanceof RegExp ? k.test(e.name) : k === e.name))) continue;
     return e.name;
   }

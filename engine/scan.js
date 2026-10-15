@@ -3,12 +3,16 @@ const path = require('path');
 const fsp = require('fs').promises;
 const crypto = require('crypto');
 const {
-  HOME, run, git: gitRaw, findNestedGit, trackedState, diskUsage, pool, exists, isRealDir, readdirSafe, tilde, expandHome, diskInfo, lastActivity,
+  HOME, run, git: gitRaw, findNestedGit, trackedState, diskUsage, pool, exists, isRealDir, readdirSafe, tilde, expandHome, diskInfo, disksInfo, lastActivity,
 } = require('./util');
 const {
   CATEGORIES, PROJECT_DIR_NAMES, specCandidates, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT,
-  SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN,
+  SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN, winAppCachePaths,
 } = require('./catalog');
+const {
+  IS_WIN, BACKUPS, TRASH, MAC_CACHES, LOGS, DOWNLOADS, WORDS, COPY_RE, isInside, rootProblem, canonicalCase, diskName, isProgramDir, WIN_SYSTEM_TOP,
+} = require('./platform');
+const { recycleBinInfo } = require('./recyclebin');
 const { assessWorktree } = require('./worktree');
 const kinds = require('./kinds');
 
@@ -18,8 +22,8 @@ const LOCKFILES = [
   ['pnpm-lock.yaml', 'pnpm'], ['package-lock.json', 'npm'], ['yarn.lock', 'yarn'],
   ['bun.lockb', 'bun'], ['bun.lock', 'bun'],
 ];
-const NO_DESCEND = new Set(['.git', '.Trash', 'Library', '.venv', 'venv', '__pycache__', '.idea', '.gradle', 'Pods', 'DerivedData', 'target', '.build', '.dart_tool', '_build', '.tox']);
-const BACKUPS = path.join(HOME, 'Library', 'Application Support', 'MobileSync', 'Backup');
+const NO_DESCEND = new Set(['.git', '.Trash', 'Library', '.venv', 'venv', '__pycache__', '.idea', '.gradle', 'Pods', 'DerivedData', 'target', '.build', '.dart_tool', '_build', '.tox',
+  'AppData', '$RECYCLE.BIN', 'System Volume Information']);
 const GIT_ENV = { GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' };
 
 const idOf = (...parts) => crypto.createHash('sha1').update(parts.join('\n')).digest('hex').slice(0, 12);
@@ -53,7 +57,7 @@ async function findLockRoot(dir, stopAt) {
   const own = await lockIn(dir);
   if (own) return own;
   let d = dir;
-  while (d !== stopAt && d.startsWith(stopAt + '/')) {
+  while (isInside(d, stopAt)) {
     if (await exists(path.join(d, '.git'))) break;
     d = path.dirname(d);
     if (await isWorkspaceRoot(d)) {
@@ -92,6 +96,9 @@ async function walkProjects(roots, onProgress) {
       }
       if (name.endsWith('.app')) continue; // never look inside application bundles
       if (NO_DESCEND.has(name)) continue;
+      if (IS_WIN && name.startsWith('$')) continue; // Windows system folders ($RECYCLE.BIN, $WinREAgent...)
+      // Installed programs and games (Program Files, SteamLibrary...), and system folders at the top of a drive.
+      if (isProgramDir(name) || (IS_WIN && depth === 0 && path.parse(dir).root === dir && WIN_SYSTEM_TOP.has(name.toLowerCase()))) continue;
       if (name === '.claude' || name === '.codex' || name === '.conductor') {
         const wtDir = path.join(full, 'worktrees');
         for (const w of await readdirSafe(wtDir)) {
@@ -101,7 +108,7 @@ async function walkProjects(roots, onProgress) {
         }
         continue;
       }
-      const m = /^(.+?) copy(?: \d+)?$/.exec(name);
+      const m = COPY_RE.exec(name);
       const orig = m && entries.find((x) => x.name === m[1]);
       if (orig && orig.isDirectory() && !orig.isSymbolicLink()) {
         found.copies.push({ dir: full, original: path.join(dir, m[1]) });
@@ -317,8 +324,8 @@ async function buildItems(found, settings, onProgress) {
         risk: 'check',
         recommended: false,
         what: `A copy of an AI-agent worktree inside ${project}. Git does not use this copy: the real worktree is at ${tilde(a.registeredAt)}.`,
-        after: 'The folder moves to the Trash. The real worktree and its branch are not touched.',
-        lose: 'Only files you edited in this copy by hand. You can put it back from the Trash.',
+        after: `The folder moves to the ${WORDS.trash}. The real worktree and its branch are not touched.`,
+        lose: `Only files you edited in this copy by hand. You can put it back from the ${WORDS.trash}.`,
       });
       continue;
     }
@@ -388,13 +395,13 @@ async function buildItems(found, settings, onProgress) {
       risk: 'check',
       recommended: false,
       tags: [...(same ? ['Same latest commit as the original'] : []), ...(copyChanges ? [`${copyChanges} uncommitted change${copyChanges === 1 ? '' : 's'} in the copy`] : [])],
-      what: `A Finder copy of ${path.basename(c.original)}, including its own node_modules and worktrees.`,
-      after: 'The whole folder moves to the Trash. You can put it back from the Trash until you empty it.',
+      what: `A ${WORDS.fileManager} copy of ${path.basename(c.original)}, including its own node_modules and worktrees.`,
+      after: `The whole folder moves to the ${WORDS.trash}. You can put it back from the ${WORDS.trash} until you empty it.`,
       lose: (same
         ? 'It is at the same commit as the original, but Clearspace did not compare uncommitted changes, untracked files or .env files.'
         : 'Possibly: it is not at the same commit as the original.')
         + (copyChanges ? ` Git shows ${copyChanges} uncommitted change${copyChanges === 1 ? '' : 's'} in the copy.` : '')
-        + ' Look inside before cleaning. It goes to the Trash, so you can put it back.',
+        + ` Look inside before cleaning. It goes to the ${WORDS.trash}, so you can put it back.`,
     });
   }
 
@@ -403,10 +410,10 @@ async function buildItems(found, settings, onProgress) {
   const sp = await run('pnpm', ['store', 'path'], { timeout: 10000, cwd: HOME });
   if (sp.code === 0 && sp.stdout.trim()) pnpmStore = path.dirname(sp.stdout.trim());
   for (const c of DEV_CACHES) {
-    let p = expandHome(c.path);
+    let p = canonicalCase(expandHome(c.path));
     if (c.key === 'pnpm-prune') {
       if (sp.code !== 0) continue; // pnpm not installed
-      if (pnpmStore) p = pnpmStore;
+      if (pnpmStore) p = canonicalCase(pnpmStore);
     }
     if (!(await isRealDir(p))) continue;
     items.push({
@@ -460,8 +467,33 @@ async function buildItems(found, settings, onProgress) {
   }
 
   // ---- App caches & logs
-  const cachesDir = path.join(HOME, 'Library', 'Caches');
-  for (const e of await readdirSafe(cachesDir)) {
+  // Windows: only cache folders known by exact location (see WIN_APP_CACHES), one item per app.
+  const winCaches = new Map();
+  for (const { entry, path: p } of IS_WIN ? winAppCachePaths() : []) {
+    if (!winCaches.has(entry)) winCaches.set(entry, []);
+    winCaches.get(entry).push(p);
+  }
+  for (const [entry, paths] of winCaches) {
+    const safe = entry.risk !== 'check';
+    items.push({
+      id: idOf('app', entry.key),
+      category: 'apps',
+      title: entry.title,
+      kindLabel: null,
+      subtitle: tilde(paths.length === 1 ? paths[0] : entry.at),
+      paths,
+      action: 'empty',
+      risk: safe ? 'safe' : 'check',
+      recommended: safe,
+      tags: [],
+      minSize: 5 * MB,
+      ...APP_CACHE_TEXT,
+      ...(entry.what ? { what: entry.what, after: entry.after, lose: entry.lose } : {}),
+    });
+  }
+  // macOS: every folder in ~/Library/Caches; only known-safe ones are preselected.
+  const cachesDir = MAC_CACHES;
+  for (const e of cachesDir ? await readdirSafe(cachesDir) : []) {
     if (!e.isDirectory() || e.isSymbolicLink()) continue;
     if (APP_CACHE_SKIP.some((re) => re.test(e.name))) continue;
     const p = path.join(cachesDir, e.name);
@@ -484,12 +516,12 @@ async function buildItems(found, settings, onProgress) {
       ...(safe ? {} : { lose: warn ? warn[1] : APP_CACHE_UNKNOWN }),
     });
   }
-  const logs = path.join(HOME, 'Library', 'Logs');
+  const logs = canonicalCase(LOGS);
   if (await isRealDir(logs)) {
     items.push({
       id: idOf('app', logs),
       category: 'apps',
-      title: 'Log files',
+      title: IS_WIN ? 'Crash dumps' : 'Log files',
       subtitle: tilde(logs),
       paths: [logs],
       action: 'empty',
@@ -497,14 +529,14 @@ async function buildItems(found, settings, onProgress) {
       recommended: true,
       tags: [],
       minSize: 5 * MB,
-      what: 'Diagnostic logs and crash reports written by apps.',
-      after: 'Apps start new log files. Old crash reports are gone.',
-      lose: 'Only old logs, which you would need only to debug a past crash.',
+      what: IS_WIN ? 'Memory dumps Windows saved when apps crashed.' : 'Diagnostic logs and crash reports written by apps.',
+      after: IS_WIN ? 'New dumps are saved if an app crashes again. Old ones are gone.' : 'Apps start new log files. Old crash reports are gone.',
+      lose: IS_WIN ? 'Only old crash dumps, which you would need only to debug a past crash.' : 'Only old logs, which you would need only to debug a past crash.',
     });
   }
 
   // ---- Downloads & Trash
-  const dl = path.join(HOME, 'Downloads');
+  const dl = DOWNLOADS;
   for (const e of await readdirSafe(dl)) {
     if (e.isSymbolicLink() || e.name.startsWith('.')) continue;
     const p = path.join(dl, e.name);
@@ -530,14 +562,14 @@ async function buildItems(found, settings, onProgress) {
       what: installer
         ? 'A downloaded installer or archive. Once the app is installed or the files extracted, it is usually not needed.'
         : 'A large item in your Downloads folder.',
-      after: 'It moves to the Trash. You can put it back until you empty the Trash.',
+      after: `It moves to the ${WORDS.trash}. You can put it back until you empty the ${WORDS.trash}.`,
       lose: 'Only if you still need this file. Check before cleaning.',
     });
   }
-  // ---- iPhone and iPad backups made by Finder (readable only with Full Disk Access)
-  for (const e of await readdirSafe(BACKUPS)) {
+  // ---- iPhone and iPad backups made by Finder, iTunes or Apple Devices (on macOS readable only with Full Disk Access)
+  for (const backups of BACKUPS) for (const e of await readdirSafe(backups)) {
     if (!e.isDirectory() || e.isSymbolicLink()) continue;
-    const p = path.join(BACKUPS, e.name);
+    const p = path.join(backups, e.name);
     const plist = path.join(p, 'Info.plist');
     if (!(await exists(plist))) continue; // only folders that are really device backups
     const info = await readBackupInfo(plist);
@@ -556,28 +588,34 @@ async function buildItems(found, settings, onProgress) {
       recommended: false,
       tags: age === null ? [] : [age <= 0 ? 'Backed up today' : `Backed up ${age} day${age === 1 ? '' : 's'} ago`],
       minSize: 50 * MB,
-      what: 'A backup of an iPhone or iPad that Finder made on this Mac.',
-      after: 'It moves to the Trash. You can put it back until you empty the Trash.',
-      lose: 'Yes, once the Trash is emptied: you could no longer restore the device from this backup. Keep it unless the device is backed up somewhere else, such as iCloud, or you no longer have it.',
+      what: IS_WIN
+        ? 'A backup of an iPhone or iPad that iTunes or the Apple Devices app made on this PC.'
+        : 'A backup of an iPhone or iPad that Finder made on this Mac.',
+      after: `It moves to the ${WORDS.trash}. You can put it back until you empty the ${WORDS.trash}.`,
+      lose: `Yes, once the ${WORDS.trash} is emptied: you could no longer restore the device from this backup. Keep it unless the device is backed up somewhere else, such as iCloud, or you no longer have it.`,
     });
   }
 
-  const trash = path.join(HOME, '.Trash');
+  // Windows: the Recycle Bin is measured (and later emptied) through the Windows shell, on every drive.
+  const bin = IS_WIN ? await recycleBinInfo() : undefined;
   items.push({
     id: idOf('trash'),
     category: 'files',
-    title: 'Trash',
+    title: WORDS.trash,
     kindLabel: null,
-    subtitle: 'Items you already moved to the Trash',
-    paths: [trash],
+    subtitle: `Items you already moved to the ${WORDS.trash}`,
+    paths: [TRASH],
     action: 'empty-trash',
     risk: 'check',
     recommended: false,
-    tags: [],
+    tags: bin && bin.count ? [`${bin.count} item${bin.count === 1 ? '' : 's'}`] : [],
     minSize: 1,
-    what: 'Files you deleted in Finder. They still take space until the Trash is emptied.',
-    after: 'Everything in your Trash on this Mac is deleted. Trash folders on external drives are not touched.',
-    lose: 'Yes: everything in the Trash is deleted for good and cannot be put back.',
+    ...(IS_WIN ? { knownSize: bin ? bin.size : null } : {}),
+    what: `Files you deleted in ${WORDS.fileManager}. They still take space until the ${WORDS.trash} is emptied.`,
+    after: IS_WIN
+      ? 'Everything in the Recycle Bin is deleted, on every drive of this PC.'
+      : 'Everything in your Trash on this Mac is deleted. Trash folders on external drives are not touched.',
+    lose: `Yes: everything in the ${WORDS.trash} is deleted for good and cannot be put back.`,
   });
 
   return items;
@@ -620,16 +658,6 @@ function prettyBundle(name) {
   return name;
 }
 
-/** Folders that must not be used as project folders (they hold tools, apps or system data). */
-function rootProblem(real) {
-  if (real === HOME || !real.startsWith(HOME + '/')) return 'choose a folder inside your home folder, not the home folder itself';
-  const first = real.slice(HOME.length + 1).split('/')[0];
-  if (first.toLowerCase() === 'library') return 'the Library folder holds app and system data';
-  if (first.startsWith('.')) return 'hidden folders hold tools and settings';
-  if (real.split('/').some((seg) => seg.endsWith('.app'))) return 'it is inside an application';
-  return null;
-}
-
 /** Full scan. `onProgress({phase, detail, done, total})`. */
 async function scan(settings, onProgress) {
   const started = Date.now();
@@ -644,7 +672,7 @@ async function scan(settings, onProgress) {
   }
   // A root inside another root would be scanned twice.
   for (let i = roots.length - 1; i >= 0; i--) {
-    if (roots.some((o, j) => j !== i && roots[i].startsWith(o + '/'))) roots.splice(i, 1);
+    if (roots.some((o, j) => j !== i && isInside(roots[i], o))) roots.splice(i, 1);
   }
   onProgress && onProgress({ phase: 'walk', detail: 'Looking through your project folders' });
   const found = await walkProjects(roots, onProgress);
@@ -681,7 +709,11 @@ async function scan(settings, onProgress) {
   const min = { build: 1 * MB, deps: 1 * MB, leftovers: 1 * MB, pkg: 1 * MB, apps: 5 * MB, files: 50 * MB };
   items = items.filter((it) => {
     if (it.action === 'empty-trash') {
-      if (it.size === null) warnings.push('Clearspace could not measure the Trash. Give it Full Disk Access in System Settings to include it.');
+      if (it.size === null) {
+        warnings.push(IS_WIN
+          ? 'Clearspace could not measure the Recycle Bin, so it is not listed. You can still empty it from File Explorer.'
+          : 'Clearspace could not measure the Trash. Give it Full Disk Access in System Settings to include it.');
+      }
       return it.size >= MB;
     }
     if (it.size === null) return it.risk === 'locked';
@@ -696,7 +728,7 @@ async function scan(settings, onProgress) {
   });
   return {
     items, categories, warnings,
-    disk: await diskInfo(HOME),
+    disk: await disksInfo(roots),
     roots: roots.map(tilde),
     scannedAt: Date.now(),
     tookMs: Date.now() - started,

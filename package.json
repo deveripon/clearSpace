@@ -1,8 +1,8 @@
 {
   "name": "clearspace",
   "productName": "Clearspace",
-  "version": "1.0.0",
-  "description": "Free up disk space on your Mac safely: build caches, node_modules, agent worktrees and app caches, explained before anything is cleaned.",
+  "version": "1.0.1",
+  "description": "Free up disk space on your Mac or Windows PC safely: build caches, node_modules, agent worktrees and app caches, explained before anything is cleaned.",
   "main": "main.js",
   "private": true,
   "author": "Ripon (deveripon)",
@@ -17,6 +17,7 @@
   },
   "keywords": [
     "macos",
+    "windows",
     "disk-space",
     "cleaner",
     "node_modules",
@@ -26,7 +27,9 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --mac --dir",
-    "test": "bash test/make-fakehome.sh /tmp/clearspace-fakehome && HOME=/tmp/clearspace-fakehome node --test test/engine.test.js && HOME=/tmp/clearspace-fakehome-safety node --test test/safety.test.js"
+    "dist:win": "electron-builder --win --x64",
+    "test:win": "node --test test/windows.test.js",
+    "test":"bash test/make-fakehome.sh /tmp/clearspace-fakehome && HOME=/tmp/clearspace-fakehome node --test test/engine.test.js && HOME=/tmp/clearspace-fakehome-safety node --test test/safety.test.js"
   },
   "devDependencies": {
     "electron": "^37.0.0",
@@ -58,6 +61,25 @@
       "extendInfo": {
         "NSDownloadsFolderUsageDescription": "Clearspace lists large files in Downloads so you can decide whether to remove them."
       }
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Clearspace",
+      "artifactName": "Clearspace-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Clearspace-${version}-portable.${ext}"
     }
   }
 }

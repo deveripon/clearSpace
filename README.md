@@ -6,7 +6,7 @@
 </h1>
 
 <p align="center">
-  Free up disk space on your Mac without the fear of deleting something you need.<br>
+  Free up disk space on your Mac or Windows PC without the fear of deleting something you need.<br>
   Clearspace finds build caches and installed packages from any stack, app caches, old iPhone backups,<br>
   big downloads and leftover AI-agent worktrees,<br>
   explains every item in plain language, and cleans only what you approve.
@@ -37,6 +37,29 @@ cd clearSpace && git pull && bash install.sh
 ```bash
 rm -rf /Applications/Clearspace.app ~/Library/Application\ Support/Clearspace
 ```
+
+### Windows
+
+You need Windows 10 or 11, [Node.js](https://nodejs.org) 18 or later and [Git for Windows](https://git-scm.com/download/win). In PowerShell:
+
+```powershell
+git clone https://github.com/deveripon/clearSpace.git; cd clearSpace; npm install; npm run dist:win
+```
+
+This builds two files in `dist\`:
+
+- `Clearspace-Setup-1.0.1.exe` installs Clearspace for your user (no administrator rights needed) with Start menu and desktop shortcuts. Uninstall it from **Settings > Apps**.
+- `Clearspace-1.0.1-portable.exe` runs without installing.
+
+The build is not code-signed, so Windows SmartScreen may say it "protected your PC" the first time. Choose **More info**, then **Run anyway**.
+
+What is different on Windows:
+
+- **Project folders can be on any drive**: a folder such as `D:\code`, or a whole data drive such as `D:\`. The system drive outside your user folder, `Windows`, `Program Files`, `ProgramData`, game libraries (Steam, Epic, Riot...) and hidden folders are never scanned. Each drive gets its own bar at the top. Add yours in **Settings**; by default Clearspace uses `~\Projects`, `~\source\repos` and the other folders listed below, if they exist.
+- **App caches** are only the cache folders of known apps at their exact locations in AppData: Chrome, Edge, Brave, Vivaldi, Opera and Firefox (every profile), VS Code, Cursor, Slack, Discord, Teams and other Electron apps, NVIDIA, AMD, Intel and DirectX shader caches, crash dumps and Windows error reports. Logins, history, settings and extensions next to them are never touched. Your `Temp` folder is listed but never preselected.
+- **Developer caches** are found where the tools keep them on Windows (`%LOCALAPPDATA%\npm-cache`, `pip\Cache`, `uv\cache`, `Yarn\Cache`, `go-build`, NuGet and more).
+- **The Recycle Bin** is measured and emptied through Windows itself, on every drive, like File Explorer's "Empty Recycle Bin". Items Clearspace moves away go to the Recycle Bin.
+- Folders behind junctions and symbolic links are treated exactly like symbolic links on macOS: never followed, never offered.
 
 ## Using it
 
@@ -117,10 +140,12 @@ Clearspace was built for one rule: **never delete anything you need.** Every pro
 npm install
 npm start      # run without installing
 npm test       # engine + safety tests in a throwaway fake home folder
+npm run test:win   # Windows engine tests (fixtures built in a throwaway fake user folder)
 ```
 
 ```
 engine/     scan.js (what can be cleaned), clean.js (checks + cleaning), worktree.js (git safety),
+            platform.js (macOS and Windows differences), recyclebin.js (Windows Recycle Bin),
             catalog.js (plain-language descriptions, known-safe lists), util.js
 main.js     window, menu and IPC (accepts only item ids from the latest scan)
 preload.js  the bridge between window and engine

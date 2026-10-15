@@ -125,6 +125,7 @@ html.electron .sidebar { background: transparent; }
 
 /* ---------- capacity strip (the signature element) ---------- */
 .capacity { padding: 6px 28px 18px; }
+.cap-disk + .cap-disk { margin-top: 12px; }
 .cap-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 .cap-head strong { font-weight: 600; }
 .cap-head .after { margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--line-strong); color: var(--accent); font-weight: 600; }
@@ -346,3 +347,20 @@ html.electron .sidebar { background: transparent; }
   .item-tags { display: none; }
   .item-row { grid-template-columns: 20px minmax(0, 1fr) 78px 96px 20px; }
 }
+
+/* ---------- Windows ---------- */
+/* No vibrancy on Windows: solid sidebar and window. Windows draws minimize/maximize/close over the top right of the toolbar. */
+html.win {
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+}
+html.win body { background: var(--window); }
+html.win .sidebar { background: var(--sidebar); }
+html.win .sidebar-drag { height: 14px; }
+html.win .toolbar { padding-right: 150px; }
+html.win code { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }
+html.win ::-webkit-scrollbar { width: 10px; height: 10px; }
+html.win ::-webkit-scrollbar-track { background: transparent; }
+html.win ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+html.win ::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+.bar.bar-thin { height: 8px; }
