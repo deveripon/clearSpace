@@ -5,7 +5,7 @@
  *
  * kind:
  *   'linked'  – a real git worktree registered to this exact folder (compared by inode, not by path string)
- *   'copy'    – a Finder copy of a worktree: its .git file points at a worktree that exists somewhere else
+ *   'copy'    – a Finder or File Explorer copy of a worktree: its .git file points at a worktree that exists somewhere else
  *   'unknown' – anything else (full clone, broken link, no .git). Always locked.
  */
 const path = require('path');
@@ -18,11 +18,12 @@ const GENERATED = new Set(['node_modules', '.next', '.turbo', '.nuxt', '.svelte-
   '.vercel', '.expo', '.angular', '__pycache__', '.pytest_cache', 'playwright-report', 'test-results']);
 // Usually tool output, but a person could put files there: allowed, but the item becomes "Check first" and names them.
 const PROBABLY_GENERATED = new Set(['dist', 'build', 'out', 'coverage', '.cache', 'tmp']);
-const GENERATED_FILE = /(\.tsbuildinfo|^\.DS_Store|^next-env\.d\.ts|\.log)$/;
+const GENERATED_FILE = /(\.tsbuildinfo|^\.DS_Store|^Thumbs\.db|^desktop\.ini|^next-env\.d\.ts|\.log)$/;
 
 async function sameFile(a, b) {
   try {
-    const [x, y] = await Promise.all([fsp.stat(a), fsp.stat(b)]);
+    // bigint: Windows file ids are 64-bit and would lose precision as numbers.
+    const [x, y] = await Promise.all([fsp.stat(a, { bigint: true }), fsp.stat(b, { bigint: true })]);
     return x.dev === y.dev && x.ino === y.ino;
   } catch { return false; }
 }

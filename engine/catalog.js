@@ -6,6 +6,9 @@
  *   after  – what happens after cleaning?
  *   lose   – will I lose anything?
  */
+const fs = require('fs');
+const path = require('path');
+const { IS_WIN, HOME, LOCAL, ROAMING, WORDS, canonicalCase } = require('./platform');
 
 const CATEGORIES = [
   {
@@ -26,17 +29,21 @@ const CATEGORIES = [
   {
     id: 'pkg',
     name: 'Developer caches',
-    blurb: 'Download caches for npm, pip, Cargo, Gradle, Maven, Homebrew, Xcode and similar tools. They refill only with what you use.',
+    blurb: IS_WIN
+      ? 'Download caches for npm, pnpm, pip, uv, Cargo, Gradle, Maven, NuGet, Go and similar tools. They refill only with what you use.'
+      : 'Download caches for npm, pip, Cargo, Gradle, Maven, Homebrew, Xcode and similar tools. They refill only with what you use.',
   },
   {
     id: 'apps',
     name: 'App caches & logs',
-    blurb: 'Temporary files that apps keep in your Library. Only caches known to be safe are selected for you. Apple system caches are never touched.',
+    blurb: IS_WIN
+      ? 'Temporary files that browsers, apps and Windows keep in AppData, and crash dumps. Only caches known to be safe are selected for you. Windows system folders are never touched.'
+      : 'Temporary files that apps keep in your Library. Only caches known to be safe are selected for you. Apple system caches are never touched.',
   },
   {
     id: 'files',
-    name: 'Downloads, backups & Trash',
-    blurb: 'Large files in Downloads, old iPhone and iPad backups, and what is already in your Trash. Nothing here is selected for you.',
+    name: `Downloads, backups & ${WORDS.trash}`,
+    blurb: `Large files in Downloads, old iPhone and iPad backups, and what is already in your ${WORDS.trash}. Nothing here is selected for you.`,
   },
 ];
 
@@ -147,8 +154,8 @@ const specById = (id) => PROJECT_DIRS.find((d) => d.id === id) || null;
 const specCandidates = (name, siblings) => PROJECT_DIRS.filter((d) => d.name === name && d.markers.some((m) => siblings.has(m)));
 
 const H = '~';
-/** Known developer caches (absolute paths are resolved at scan time). */
-const DEV_CACHES = [
+/** Known developer caches on macOS (absolute paths are resolved at scan time). */
+const MAC_DEV_CACHES = [
   {
     key: 'npm', path: `${H}/.npm/_cacache`, name: 'npm download cache', action: 'delete',
     what: 'Every package npm has ever downloaded, kept so repeat installs are faster.',
@@ -266,6 +273,82 @@ const DEV_CACHES = [
   },
 ];
 
+/** Known developer caches on Windows. Tools keep them in %LOCALAPPDATA% or in hidden folders in your user folder. */
+const L = (...p) => (IS_WIN ? path.join(LOCAL, ...p) : null);
+const U = (...p) => path.join(HOME, ...p);
+const byKey = (k) => MAC_DEV_CACHES.find((c) => c.key === k);
+const WIN_DEV_CACHES = [
+  { ...byKey('npm'), path: L('npm-cache', '_cacache') },
+  { ...byKey('pnpm-prune'), path: L('pnpm', 'store'),
+    what: 'pnpm keeps one shared copy of every package on your PC. After node_modules folders are deleted, their packages stay here until pruned.' },
+  { ...byKey('bun'), path: U('.bun', 'install', 'cache') },
+  { ...byKey('yarn'), path: L('Yarn', 'Cache') },
+  {
+    key: 'yarn-berry', path: L('Yarn', 'Berry', 'cache'), name: 'Yarn (v2+) download cache', action: 'empty',
+    what: 'Packages downloaded by Yarn 2 and newer.',
+    after: 'Yarn downloads packages again when a project needs them.',
+  },
+  { ...byKey('pip'), path: L('pip', 'Cache') },
+  {
+    key: 'uv', path: L('uv', 'cache'), name: 'uv cache', action: 'empty',
+    what: 'Python packages that uv downloaded and built.',
+    after: 'uv downloads packages again when needed. Environments it already created keep working.',
+  },
+  { ...byKey('electron'), path: L('electron', 'Cache') },
+  { ...byKey('electron-builder'), path: L('electron-builder', 'Cache') },
+  { ...byKey('playwright'), path: L('ms-playwright') },
+  { ...byKey('cypress'), path: L('Cypress', 'Cache') },
+  {
+    key: 'node-gyp', path: L('node-gyp', 'Cache'), name: 'node-gyp headers', action: 'empty',
+    what: 'Node.js headers downloaded to compile native packages.',
+    after: 'Downloaded again the next time a native package is built.',
+  },
+  {
+    key: 'go-build', path: L('go-build'), name: 'Go build cache', action: 'empty',
+    what: 'Compiled Go packages, kept so builds and tests run faster.',
+    after: 'The next `go build` or `go test` compiles again once.',
+  },
+  {
+    key: 'nuget-http', path: L('NuGet', 'v3-cache'), name: 'NuGet download cache', action: 'empty',
+    what: 'Package metadata and downloads that NuGet keeps for .NET restores.',
+    after: 'NuGet downloads what it needs on the next restore.',
+  },
+  {
+    key: 'nuget-packages', path: U('.nuget', 'packages'), name: 'NuGet packages', action: 'empty', risk: 'check',
+    what: 'Every .NET package your projects restored, shared between projects.',
+    after: 'Run `dotnet restore` (or build in Visual Studio) to download the packages a project needs again.',
+    lose: 'Possibly: packages from nuget.org download again, but ones from a private or local feed you no longer have access to cannot.',
+  },
+  {
+    key: 'cpptools', path: L('Microsoft', 'vscode-cpptools', 'ipch'), name: 'VS Code C/C++ IntelliSense cache', action: 'empty',
+    what: 'Precompiled headers the C/C++ extension for VS Code creates for IntelliSense.',
+    after: 'The extension rebuilds them when you open C or C++ files again.',
+  },
+  {
+    key: 'typescript', path: L('Microsoft', 'TypeScript'), name: 'TypeScript type downloads', action: 'empty',
+    what: 'Type definitions editors download automatically for JavaScript projects.',
+    after: 'Your editor downloads them again when it needs them.',
+  },
+  { ...byKey('gradle') },
+  { ...byKey('gradle-wrapper') },
+  { ...byKey('cargo-registry') },
+  { ...byKey('cargo-src') },
+  { ...byKey('cargo-git') },
+  { ...byKey('maven') },
+  { ...byKey('composer'), path: L('Composer') },
+  {
+    key: 'scoop', path: U('scoop', 'cache'), name: 'Scoop downloads', action: 'empty',
+    what: 'Installer files Scoop downloaded for apps that are already installed.',
+    after: 'Nothing changes for installed apps. Reinstalls download again.',
+  },
+  {
+    key: 'android-cache', path: U('.android', 'cache'), name: 'Android SDK cache', action: 'empty',
+    what: 'Temporary files the Android SDK tools download.',
+    after: 'Downloaded again when the tools need them.',
+  },
+];
+const DEV_CACHES = IS_WIN ? WIN_DEV_CACHES : MAC_DEV_CACHES;
+
 const APP_CACHE_TEXT = {
   what: 'Temporary files this app keeps to load faster.',
   after: 'The app recreates what it needs. It may be a little slower the first time. Quit the app first.',
@@ -303,6 +386,87 @@ const APP_CACHE_SKIP = [
   /clearspace/i,
 ];
 
-const INSTALLER_EXT = /\.(dmg|pkg|iso|xip|zip|tar|tgz|gz|rar|7z)$/i;
+const INSTALLER_EXT = /\.(dmg|pkg|iso|xip|zip|tar|tgz|gz|rar|7z|exe|msi|msix|msixbundle|appx|appxbundle|cab)$/i;
 
-module.exports = { CATEGORIES, PROJECT_DIRS, PROJECT_DIR_NAMES, COVERAGE_FILES, specById, specCandidates, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT, SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN };
+/**
+ * Windows has no single Caches folder: each app keeps its cache inside its own AppData folder, next to settings,
+ * logins and history. So Clearspace lists only cache folders it knows by exact location, never whole app folders.
+ *   at     the app's folder; `in` the cache folders inside it; `profiles` a pattern for browser profile folders
+ *          whose cache folders (`in`) are cleaned, plus `top` cache folders next to the profiles.
+ */
+const CHROMIUM_IN = ['Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache'];
+const CHROMIUM_PROFILES = /^(Default|Profile \d+|Guest Profile|System Profile)$/;
+const CHROMIUM_TOP = ['ShaderCache', 'GrShaderCache', 'GraphiteDawnCache'];
+const ELECTRON_IN = [...CHROMIUM_IN, 'CachedData', 'CachedExtensionVSIXs'];
+const R = (...p) => (IS_WIN ? path.join(ROAMING, ...p) : null);
+const LOW = (...p) => path.join(HOME, 'AppData', 'LocalLow', ...p);
+const browser = (key, title, at) => ({ key, title, at, profiles: CHROMIUM_PROFILES, in: CHROMIUM_IN, top: CHROMIUM_TOP });
+const electronApp = (key, title, at) => ({ key, title, at, in: ELECTRON_IN });
+const SHADER = {
+  what: 'Graphics shaders compiled for your graphics card, kept so games and apps start faster.',
+  after: 'They are compiled again when an app needs them. The first start of a game may be a little slower.',
+  lose: 'No. Only compiled shaders are removed.',
+};
+const WIN_APP_CACHES = IS_WIN ? [
+  browser('chrome', 'Google Chrome', L('Google', 'Chrome', 'User Data')),
+  browser('edge', 'Microsoft Edge', L('Microsoft', 'Edge', 'User Data')),
+  browser('brave', 'Brave', L('BraveSoftware', 'Brave-Browser', 'User Data')),
+  browser('vivaldi', 'Vivaldi', L('Vivaldi', 'User Data')),
+  { key: 'opera', title: 'Opera', at: L('Opera Software', 'Opera Stable'), in: CHROMIUM_IN },
+  { key: 'firefox', title: 'Firefox', at: L('Mozilla', 'Firefox', 'Profiles'), profiles: /./, in: ['cache2', 'startupCache', 'thumbnails'] },
+  electronApp('vscode', 'Visual Studio Code', R('Code')),
+  electronApp('cursor', 'Cursor', R('Cursor')),
+  electronApp('windsurf', 'Windsurf', R('Windsurf')),
+  electronApp('slack', 'Slack', R('Slack')),
+  electronApp('discord', 'Discord', R('discord')),
+  electronApp('claude', 'Claude', R('Claude')),
+  electronApp('notion', 'Notion', R('Notion')),
+  electronApp('postman', 'Postman', R('Postman')),
+  electronApp('teams-classic', 'Microsoft Teams (classic)', R('Microsoft', 'Teams')),
+  electronApp('github-desktop', 'GitHub Desktop', R('GitHub Desktop')),
+  electronApp('signal', 'Signal', R('Signal')),
+  electronApp('obsidian', 'Obsidian', R('obsidian')),
+  electronApp('figma', 'Figma', R('Figma', 'DesktopProfile')),
+  { key: 'd3d', title: 'DirectX shader cache', at: L('D3DSCache'), self: true, ...SHADER },
+  { key: 'nvidia', title: 'NVIDIA shader cache', at: L('NVIDIA'), in: ['DXCache', 'GLCache'], extra: [LOW('NVIDIA', 'PerDriverVersion', 'DXCache')], ...SHADER },
+  { key: 'amd', title: 'AMD shader cache', at: L('AMD'), in: ['DxCache', 'DxcCache', 'GLCache', 'VkCache'], ...SHADER },
+  { key: 'intel', title: 'Intel shader cache', at: LOW('Intel'), in: ['ShaderCache'], ...SHADER },
+  {
+    key: 'inetcache', title: 'Internet cache', at: L('Microsoft', 'Windows', 'INetCache'), self: true,
+    what: 'Web files cached by Windows components and older apps that use the Internet Explorer engine.',
+    after: 'Windows downloads them again when needed.',
+    lose: 'No. Only cached web files are removed.',
+  },
+  {
+    key: 'wer', title: 'Windows error reports', at: L('Microsoft', 'Windows', 'WER'), in: ['ReportArchive', 'ReportQueue', 'Temp'],
+    what: 'Reports Windows collected after apps crashed or stopped responding.',
+    after: 'New reports are collected as before. Old ones are gone.',
+    lose: 'Only old crash reports, which you would need only to debug a past crash.',
+  },
+  {
+    key: 'temp', title: 'Temporary files', at: L('Temp'), self: true, risk: 'check',
+    what: 'Files apps and installers write to your Temp folder. Most are left behind and never used again.',
+    after: 'Apps create new temporary files as needed. Files that are open right now are skipped.',
+    lose: 'Usually not, but an app or installer that is running right now may still need some files. Close your apps first, or leave this alone.',
+  },
+] : [];
+
+/** Every Windows app cache folder that exists now: [{ entry, path }]. Recomputed right before cleaning. */
+function winAppCachePaths() {
+  const out = [];
+  const dirs = (p) => { try { return fs.readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.isSymbolicLink()).map((e) => e.name); } catch { return []; } };
+  const real = (p) => { try { const st = fs.lstatSync(p); return st.isDirectory() && !st.isSymbolicLink(); } catch { return false; } };
+  for (const entry of WIN_APP_CACHES) {
+    if (!entry.at || !real(entry.at)) continue;
+    const found = [];
+    if (entry.self) found.push(entry.at);
+    const bases = entry.profiles ? dirs(entry.at).filter((n) => entry.profiles.test(n)).map((n) => path.join(entry.at, n)) : [entry.at];
+    for (const b of bases) for (const c of entry.in || []) found.push(path.join(b, c));
+    for (const c of entry.top || []) found.push(path.join(entry.at, c));
+    for (const x of entry.extra || []) found.push(x);
+    for (const p of found) if (real(p)) out.push({ entry, path: canonicalCase(p) });
+  }
+  return out;
+}
+
+module.exports = { CATEGORIES, PROJECT_DIRS, PROJECT_DIR_NAMES, COVERAGE_FILES, specById, specCandidates, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT, SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN, WIN_APP_CACHES, winAppCachePaths };

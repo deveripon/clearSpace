@@ -4,6 +4,12 @@
   const $ = (s, el = document) => el.querySelector(s);
   const api = window.api;
   if (navigator.userAgent.includes('Electron')) document.documentElement.classList.add('electron');
+  // Words and paths that differ between macOS and Windows.
+  const WIN = api && api.platform === 'win32';
+  if (WIN) document.documentElement.classList.add('win');
+  const W = WIN
+    ? { trash: 'Recycle Bin', fileManager: 'File Explorer', computer: 'PC', sep: '\\', emptier: 'Windows empties the Recycle Bin' }
+    : { trash: 'Trash', fileManager: 'Finder', computer: 'Mac', sep: '/', emptier: 'Finder empties the Trash' };
 
   const ICONS = {
     overview: '<path d="M2.5 9.5a5.5 5.5 0 1 1 11 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M8 9.5 10.6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="9.5" r="1" fill="currentColor"/><path d="M2.5 12.5h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
@@ -60,14 +66,14 @@
   const METHOD = {
     delete: 'Deleted permanently',
     empty: 'Folder emptied (contents deleted permanently)',
-    trash: 'Moved to the Trash',
+    trash: `Moved to the ${W.trash}`,
     worktree: 'Removed with git worktree remove',
     'pnpm-prune': 'Runs pnpm store prune',
-    'empty-trash': 'Finder empties the Trash',
+    'empty-trash': W.emptier,
   };
   const METHOD_GROUP = {
     delete: 'Deleted permanently', empty: 'Deleted permanently', worktree: 'Removed with git (branches kept)',
-    trash: 'Moved to the Trash', 'pnpm-prune': 'Commands', 'empty-trash': 'Commands',
+    trash: `Moved to the ${W.trash}`, 'pnpm-prune': 'Commands', 'empty-trash': 'Commands',
   };
   const RISK = { safe: 'Safe', check: 'Check first', locked: 'Locked' };
 
@@ -90,7 +96,7 @@
 
   const items = () => (state.scan ? state.scan.items : []);
   const byId = (id) => items().find((i) => i.id === id);
-  const inside = (c, p) => c !== p && c.startsWith(p.endsWith('/') ? p : p + '/');
+  const inside = (c, p) => c !== p && c.startsWith(p.endsWith(W.sep) ? p : p + W.sep);
 
   /** Selected items, minus ones fully contained in another selected item (no double counting). */
   function effectiveSelection() {
@@ -111,7 +117,7 @@
       </button>`;
     let html = navItem('overview', 'Overview', 'overview', null, false);
     html += '<div class="nav-group">Categories</div>';
-    const names = { build: 'Build caches', deps: 'Dependencies', leftovers: 'Leftover copies', pkg: 'Developer caches', apps: 'App caches', files: 'Downloads & Trash' };
+    const names = { build: 'Build caches', deps: 'Dependencies', leftovers: 'Leftover copies', pkg: 'Developer caches', apps: 'App caches', files: WIN ? 'Files & Recycle Bin' : 'Downloads & Trash' };
     for (const id of Object.keys(names)) {
       const c = cats.find((x) => x.id === id);
       const hasSel = items().some((i) => i.category === id && state.selected.has(i.id));
@@ -122,26 +128,45 @@
     if (state.view === 'settings') s.setAttribute('aria-current', 'page'); else s.removeAttribute('aria-current');
   }
 
+  /** Every disk shown: home's, plus (Windows) each drive with a project folder, such as D:. */
+  const disks = () => (state.disk ? state.disk.all || [state.disk] : []);
+  /** Selected size on one disk (items count on the drive their first path is on; with one disk, everything). */
+  function diskSel(d) {
+    if (disks().length <= 1 || !d.root) return selSize();
+    const root = d.root.toLowerCase();
+    return effectiveSelection().filter((i) => i.paths[0].toLowerCase().startsWith(root)).reduce((a, i) => a + (i.size || 0), 0);
+  }
+
   function renderCapacity() {
-    const d = state.disk;
     const el = $('#capacity');
-    if (!d) { el.innerHTML = ''; return; }
-    const sel = Math.min(selSize(), d.used);
-    const pct = (v) => `${(v / d.total) * 100}%`;
-    el.innerHTML = `
+    const list = disks();
+    if (!list.length) { el.innerHTML = ''; return; }
+    const many = list.length > 1;
+    el.innerHTML = list.map((d) => {
+      const sel = Math.min(diskSel(d), d.used);
+      const pct = (v) => `${(v / d.total) * 100}%`;
+      return `<div class="cap-disk">
       <div class="cap-head">
-        <div><strong>Macintosh HD</strong> <span class="muted">${fmt(d.total)}</span></div>
+        <div><strong>${esc(d.name || 'Macintosh HD')}</strong> <span class="muted">${fmt(d.total)}</span></div>
         <div class="num"><strong>${fmt(d.free)}</strong> <span class="muted">free</span>${sel ? `<span class="after">${fmt(d.free + sel)} after cleaning</span>` : ''}</div>
       </div>
-      <div class="bar ${state.scanning ? 'indeterminate' : ''}" role="img" aria-label="${fmt(d.used)} used, ${fmt(sel)} of it selected to clean, ${fmt(d.free)} free">
+      <div class="bar ${many ? 'bar-thin' : ''} ${state.scanning ? 'indeterminate' : ''}" role="img" aria-label="${esc(d.name || '')}: ${fmt(d.used)} used, ${fmt(sel)} of it selected to clean, ${fmt(d.free)} free">
         <span class="seg-used" data-w="${pct(d.used - sel)}"></span>
         <span class="seg-sel" data-w="${pct(sel)}"></span>
-      </div>
+      </div></div>`;
+    }).join('') + (many ? `
+      <div class="legend num">
+        <span><i class="k-used"></i>Used</span><span><i class="k-sel"></i>Selected to clean</span><span><i class="k-free"></i>Free</span>
+      </div>` : (() => {
+      const d = list[0];
+      const sel = Math.min(selSize(), d.used);
+      return `
       <div class="legend num">
         <span><i class="k-used"></i>Used ${fmt(d.used)}</span>
         ${sel ? `<span><i class="k-sel"></i>Selected to clean ${fmt(sel)}</span>` : ''}
         <span><i class="k-free"></i>Free ${fmt(d.free)}</span>
       </div>`;
+    })());
   }
 
   function renderActionBar() {
@@ -168,7 +193,7 @@
     const label = { walk: 'Looking through your project folders', git: 'Checking worktrees and project activity', measure: 'Measuring sizes' }[p.phase] || 'Starting';
     return `
       <div class="state">
-        <h2>Scanning your Mac</h2>
+        <h2>Scanning your ${W.computer}</h2>
         <p>${esc(label)}${determinate ? ` (${p.done} of ${p.total})` : ''}</p>
         <div class="progress ${determinate ? '' : 'indeterminate'}"><span data-w="${determinate ? (p.done / p.total) * 100 : 35}%"></span></div>
         <div class="detail">${esc(p.detail || '')}</div>
@@ -242,7 +267,10 @@
       line = '';
       actions = '';
     }
-    const d = state.disk;
+    // Several drives (C: and D:): free space and capacity of all of them together.
+    const d = disks().length > 1
+      ? disks().reduce((a, x) => ({ free: a.free + x.free, total: a.total + x.total, used: a.used + x.used }), { free: 0, total: 0, used: 0 })
+      : state.disk;
     const side = d ? (() => {
       const sel = Math.min(size, d.used);
       return `
@@ -256,7 +284,7 @@
     const hero = eyebrow === null ? `
       <section class="ov-hero tidy">
         <div class="ov-main">
-          <div class="tidy-title">${svg('done', 'ico tidy-ico')}<h2>Your Mac is tidy</h2></div>
+          <div class="tidy-title">${svg('done', 'ico tidy-ico')}<h2>Your ${W.computer} is tidy</h2></div>
           <p class="hero-line">Nothing safe to remove is waiting. Items in use or worth a check are listed below.</p>
         </div>
         ${side}
@@ -306,7 +334,7 @@
     }
     if (catId === 'files') {
       return [
-        ['Trash', list.filter((i) => i.action === 'empty-trash')],
+        [W.trash, list.filter((i) => i.action === 'empty-trash')],
         ['iPhone and iPad backups', list.filter((i) => i.group === 'backup')],
         ['Large items in Downloads', list.filter((i) => i.action === 'trash' && i.group !== 'backup')],
       ];
@@ -344,7 +372,7 @@
             </dl>
             ${it.note ? `<div class="note">${rich(it.note)}</div>` : ''}
             <div class="paths">${it.paths.slice(0, 8).map((p) => `<div>${esc(p)}</div>`).join('')}${it.paths.length > 8 ? `<div>and ${it.paths.length - 8} more</div>` : ''}</div>
-            ${it.action !== 'empty-trash' && it.action !== 'pnpm-prune' ? `<div class="detail-foot"><button class="link" data-act="reveal">Show in Finder</button></div>` : ''}
+            ${it.action !== 'empty-trash' && it.action !== 'pnpm-prune' ? `<div class="detail-foot"><button class="link" data-act="reveal">Show in ${W.fileManager}</button></div>` : ''}
           </div>` : ''}
       </div>`;
   }
@@ -404,10 +432,10 @@
             <div><div class="label">Scan when Clearspace opens</div><div class="hint">Nothing is ever cleaned without your review.</div></div>
             <input type="checkbox" class="switch" data-act="scan-on-launch" ${s.scanOnLaunch ? 'checked' : ''} aria-label="Scan when Clearspace opens">
           </div>
-          <div class="set-row">
+          ${WIN ? '' : `<div class="set-row">
             <div><div class="label">Full Disk Access</div><div class="hint">Needed only to measure and empty the Trash. Turn on Clearspace in the list that opens.</div></div>
             <button class="btn" data-act="fda">Open System Settings</button>
-          </div>
+          </div>`}
         </div>
         <div class="set-title">Recent cleanups</div>
         <div class="set-block">${hist}</div>
@@ -495,12 +523,12 @@
         const cmd = i.installCmd || (i.pm ? `${i.pm} install` : null);
         warnings.push(`${esc(i.title)} was used recently. ${cmd ? `Run <code>${esc(cmd)}</code>` : 'Install its packages again'} before you work on it again.`);
       }
-      if (i.action === 'empty-trash') warnings.push('Everything in the Trash will be deleted for good.');
+      if (i.action === 'empty-trash') warnings.push(`Everything in the ${W.trash} will be deleted for good.`);
       if (i.category === 'build' && (i.tags || []).includes('Used today')) warnings.push(`Stop anything running in ${esc(i.title)} (a dev server, build or tests) before cleaning.`);
     }
     const groups = {};
     for (const i of sel) (groups[METHOD_GROUP[i.action]] = groups[METHOD_GROUP[i.action]] || []).push(i);
-    const order = ['Deleted permanently', 'Removed with git (branches kept)', 'Moved to the Trash', 'Commands'];
+    const order = ['Deleted permanently', 'Removed with git (branches kept)', `Moved to the ${W.trash}`, 'Commands'];
     const body = order.filter((g) => groups[g]).map((g) => `
       <div class="rv-group">
         <h3><span>${esc(g)} (${groups[g].length})</span><span>${fmt(groups[g].reduce((a, i) => a + (i.size || 0), 0))}</span></h3>
@@ -512,7 +540,7 @@
     sheet.innerHTML = `
       <div class="sheet-head">
         <h2 id="sheet-title">Clean ${fmt(size)}?</h2>
-        <p>${plural(sel.length, 'item')}. Check the list below. Items moved to the Trash can be put back until you empty it.</p>
+        <p>${plural(sel.length, 'item')}. Check the list below. Items moved to the ${W.trash} can be put back until you empty it.</p>
       </div>
       <div class="sheet-body">
         ${suggestPrune ? `
@@ -564,6 +592,15 @@
   function blockEsc(e) { e.preventDefault(); }
   function blockEscKey(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); } }
 
+  function volumeText(res) {
+    const changed = (res.volumes || []).filter((v) => v.before && v.after && v.after.free !== v.before.free);
+    if (changed.length <= 1) {
+      const v = changed[0] || { before: res.before, after: res.after };
+      return `freed on your disk. Free space went from ${fmt(v.before && v.before.free)} to ${fmt(v.after && v.after.free)}.`;
+    }
+    return 'freed on your disks. Free space ' + changed.map((v) => `on ${esc(v.name.slice(0, 2))} went from ${fmt(v.before.free)} to ${fmt(v.after.free)}`).join(', ') + '.';
+  }
+
   function showResult(res, total) {
     if (!res || res.error) {
       sheet.innerHTML = `
@@ -579,7 +616,7 @@
       <div class="sheet-head">
         <h2 id="sheet-title">Cleaned</h2>
         <div class="result-figure">${fmt(res.freed)}</div>
-        <p>freed on your disk. Free space went from ${fmt(res.before && res.before.free)} to ${fmt(res.after && res.after.free)}.
+        <p>${volumeText(res)}
         ${plural(doneN, 'item')} of ${total} cleaned.</p>
       </div>
       ${problems.length ? `<div class="sheet-body">
@@ -595,6 +632,8 @@
 
   async function saveSettings(patch) {
     state.settings = await api.saveSettings({ ...state.settings, ...patch });
+    // A folder on another drive adds that drive to the disk bars.
+    try { if (!state.scanning) state.disk = await api.getDisk(); } catch {}
     render();
   }
 
