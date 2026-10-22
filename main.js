@@ -6,6 +6,7 @@ const os = require('os');
 const { run, diskInfo, tilde, expandHome } = require('./engine/util');
 const { scan, rootProblem } = require('./engine/scan');
 const { clean } = require('./engine/clean');
+const memory = require('./engine/memory');
 
 const HOME = os.homedir();
 let win = null;
@@ -142,6 +143,34 @@ ipcMain.handle('reveal', (_e, p) => {
   const ok = lastScan.items.some((it) => it.paths.includes(p));
   if (ok) shell.showItemInFolder(p);
 });
+
+// ---------- memory ----------
+// The window only ever sends an app id from the latest snapshot; the bundle path never comes from the window.
+let lastMemory = null;
+let purging = false;
+const selfBundle = memory.bundleOf(process.execPath);
+const memoryView = (m) => (m.error ? m : { ...m, apps: m.apps.map(({ id, name, bytes, cpu, pids }) => ({ id, name, bytes, cpu, processes: pids.length })) });
+ipcMain.handle('memory:get', async () => {
+  const m = await memory.snapshot({ selfBundle });
+  if (!m.error) lastMemory = m;
+  return memoryView(m);
+});
+ipcMain.handle('memory:quit', async (_e, id) => {
+  const app = lastMemory && lastMemory.apps.find((a) => a.id === id);
+  if (!app) return { error: 'That app is no longer in the list. Refresh and try again.' };
+  return memory.quitApp(app);
+});
+ipcMain.handle('memory:purge', async () => {
+  if (purging) return { error: 'Already freeing memory.' };
+  purging = true;
+  try {
+    const r = await memory.purge({ selfBundle });
+    if (r.after && !r.after.error) lastMemory = r.after;
+    return r.after ? { ...r, after: memoryView(r.after) } : r;
+  } finally { purging = false; }
+});
+
+ipcMain.handle('open:loginItems', () => shell.openExternal('x-apple.systempreferences:com.apple.LoginItems-Settings.extension'));
 
 ipcMain.handle('open:fullDiskAccess', () =>
   shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'));

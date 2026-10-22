@@ -55,6 +55,17 @@ On first launch, open **Settings** and check the project folders. By default Cle
   <img src="docs/review.png" width="820" alt="The review sheet lists every item that will be cleaned, grouped by how it is cleaned, before anything happens">
 </p>
 
+## Performance
+
+The **Performance** page works like a simple Activity Monitor:
+
+- **Memory and CPU** at a glance, with memory pressure, swap and how busy the processor is.
+- **Apps**, sorted by memory or CPU. **Quit** asks the app to quit the same way ⌘Q does, so it can ask you to save first. Clearspace never force-quits anything, and never offers macOS's own apps such as Finder or the Dock.
+- **Background processes** that aren't apps, such as Spotlight indexing or iCloud syncing, with a line on what each one is doing. These are shown for information only.
+- **Make your Mac faster**: a shortcut to the apps that open at login, and **Free up memory**, which runs macOS's `purge` command (it asks for your password; the effect is temporary).
+
+The first time you quit an app from Clearspace, macOS asks whether Clearspace may control it. That is the Automation permission, and you can change it in System Settings → Privacy & Security → Automation.
+
 ## What it cleans
 
 | Category | Examples | Selected for you |

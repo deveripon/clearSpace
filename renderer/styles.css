@@ -145,6 +145,34 @@ html.electron .sidebar { background: transparent; }
 .legend .k-sel { background: var(--accent); }
 .legend .k-free { background: var(--free); box-shadow: inset 0 0 0 1px var(--line-strong); }
 
+/* ---------- memory ---------- */
+.bar.mem .seg-app, .legend .k-app { background: var(--accent); }
+.bar.mem .seg-wired, .legend .k-wired { background: color-mix(in srgb, var(--ink) 55%, var(--surface)); }
+.bar.mem .seg-comp, .legend .k-comp { background: color-mix(in srgb, var(--check) 70%, var(--surface)); }
+.bar.mem .seg-cache, .legend .k-cache { background: var(--used); }
+.p-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 0; }
+.p-dot.p-normal { background: var(--safe); }
+.p-dot.p-warning { background: var(--check); }
+.p-dot.p-critical { background: var(--danger); }
+.mem-row { display: grid; grid-template-columns: minmax(0, 1fr) 56px 76px 76px; align-items: center; gap: 14px; padding: 10px 16px; border-top: 1px solid var(--line); }
+.mem-row:first-child { border-top: 0; }
+.mem-row.mem-head { padding-top: 8px; padding-bottom: 8px; font-size: 11.5px; }
+.mem-row.mem-head > div:nth-child(2), .mem-row.mem-head > div:nth-child(3) { text-align: right; }
+.mem-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-name .hint { font-weight: 400; white-space: normal; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.mem-name .tag { display: inline-block; vertical-align: middle; line-height: 16px; margin-left: 6px; font-size: 10.5px; font-weight: 500; }
+.mem-size { font-weight: 600; text-align: right; }
+.mem-cpu { text-align: right; color: var(--ink-2); }
+.mem-cpu.hot { color: var(--check); font-weight: 600; }
+.mem-row > .btn { justify-self: end; }
+.cpu-head { margin-top: 12px; }
+.speed-tip { margin: 0 0 4px; }
+.seg-toggle { display: inline-flex; background: var(--hover); border-radius: 7px; padding: 2px; gap: 2px; }
+.seg-btn { border: 0; background: transparent; color: var(--ink-2); font: inherit; font-size: 12px; font-weight: 550; padding: 3px 10px; border-radius: 5px; cursor: pointer; }
+.seg-btn.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mem-list + .notice, .set-block + .notice { margin-top: 10px; }
+
 /* ---------- brand ---------- */
 .brand { display: flex; align-items: center; padding: 0 20px 16px; }
 .brand .logo { height: 24px; width: auto; display: block; }
@@ -175,7 +203,8 @@ html.electron .sidebar { background: transparent; }
 .ov-arrow { color: var(--muted); width: 14px; height: 14px; }
 
 
-.section-title { font-size: 13px; font-weight: 600; margin: 28px 2px 10px; color: var(--ink); }
+.section-title { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; font-weight: 600; margin: 28px 2px 10px; color: var(--ink); }
+.section-title .muted { font-weight: 400; font-size: 12px; }
 .cat-list { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .cat-row {
   display: grid; grid-template-columns: 1fr auto auto 16px; align-items: center; gap: 18px;

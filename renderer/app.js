@@ -6,6 +6,7 @@
   if (navigator.userAgent.includes('Electron')) document.documentElement.classList.add('electron');
 
   const ICONS = {
+    memory: '<rect x="3.5" y="3.5" width="9" height="9" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.25"/><rect x="6" y="6" width="4" height="4" rx=".6" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M6 1.8v1.7M10 1.8v1.7M6 12.5v1.7M10 12.5v1.7M1.8 6h1.7M1.8 10h1.7M12.5 6h1.7M12.5 10h1.7" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>',
     overview: '<path d="M2.5 9.5a5.5 5.5 0 1 1 11 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M8 9.5 10.6 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="9.5" r="1" fill="currentColor"/><path d="M2.5 12.5h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
     build: '<path d="M3 13 9.2 6.8M8.4 3.2l4.4 4.4-1.6 1.6-4.4-4.4zM10 2.6l3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
     deps: '<path d="M8 1.8 13.5 4.8v6.4L8 14.2 2.5 11.2V4.8zM2.5 4.8 8 7.8l5.5-3M8 7.8v6.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>',
@@ -86,6 +87,11 @@
     history: [],
     error: null,
     lastClean: null, // { freed, items } from the clean that just finished, shown until the next scan
+    memory: null, // latest memory snapshot (Memory view)
+    quitting: new Set(), // app ids being asked to quit
+    memSort: 'memory', // 'memory' | 'cpu' (Performance view)
+    memNote: null, // { kind: 'ok' | 'error', text } shown under the apps list or the purge row
+    purging: false,
   };
 
   const items = () => (state.scan ? state.scan.items : []);
@@ -110,6 +116,7 @@
         ${size != null ? `<span class="nav-size ${hasSel ? 'has-sel' : ''}" ${hasSel ? 'title="Has selected items"' : ''}>${fmt(size)}</span>` : ''}
       </button>`;
     let html = navItem('overview', 'Overview', 'overview', null, false);
+    html += navItem('memory', 'Performance', 'memory', null, false);
     html += '<div class="nav-group">Categories</div>';
     const names = { build: 'Build caches', deps: 'Dependencies', leftovers: 'Leftover copies', pkg: 'Developer caches', apps: 'App caches', files: 'Downloads & Trash' };
     for (const id of Object.keys(names)) {
@@ -123,6 +130,7 @@
   }
 
   function renderCapacity() {
+    if (state.view === 'memory') return renderMemoryStrip();
     const d = state.disk;
     const el = $('#capacity');
     if (!d) { el.innerHTML = ''; return; }
@@ -144,9 +152,144 @@
       </div>`;
   }
 
+  // ---------- memory ----------
+  // RAM is sold and shown in binary units (16 GB = 16 × 1024³ bytes), as Activity Monitor does.
+  function fmtMem(bytes) {
+    if (bytes == null) return '—';
+    const gb = bytes / 1024 ** 3;
+    if (gb >= 1) return `${gb >= 100 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
+    return `${Math.round(bytes / 1024 ** 2)} MB`;
+  }
+  function renderMemoryStrip() {
+    const el = $('#capacity');
+    const m = state.memory;
+    if (!m || m.error) { el.innerHTML = ''; return; }
+    const pct = (v) => `${(v / m.total) * 100}%`;
+    el.innerHTML = `
+      <div class="cap-head">
+        <div><strong>Memory</strong> <span class="muted">${fmtMem(m.total)}</span></div>
+        <div class="num"><strong>${fmtMem(m.used)}</strong> <span class="muted">used</span></div>
+      </div>
+      <div class="bar mem" role="img" aria-label="${fmtMem(m.app)} app memory, ${fmtMem(m.wired)} wired, ${fmtMem(m.compressed)} compressed, ${fmtMem(m.cached)} cached files, ${fmtMem(m.free)} free">
+        <span class="seg-app" data-w="${pct(m.app)}"></span><span class="seg-wired" data-w="${pct(m.wired)}"></span><span class="seg-comp" data-w="${pct(m.compressed)}"></span><span class="seg-cache" data-w="${pct(m.cached)}"></span>
+      </div>
+      <div class="legend num">
+        <span><i class="k-app"></i>Apps ${fmtMem(m.app)}</span>
+        <span><i class="k-wired"></i>Wired ${fmtMem(m.wired)}</span>
+        <span><i class="k-comp"></i>Compressed ${fmtMem(m.compressed)}</span>
+        <span><i class="k-cache"></i>Cached files ${fmtMem(m.cached)}</span>
+        <span><i class="k-free"></i>Free ${fmtMem(m.free)}</span>
+      </div>${m.cpu ? `
+      <div class="cap-head cpu-head">
+        <div><strong>CPU</strong> <span class="muted">${m.cpu.cores} cores</span></div>
+        <div class="num"><strong>${pctText(m.cpu.user + m.cpu.system)}</strong> <span class="muted">in use</span></div>
+      </div>
+      <div class="bar mem" role="img" aria-label="CPU ${pctText(m.cpu.user)} apps, ${pctText(m.cpu.system)} system, ${pctText(m.cpu.idle)} idle">
+        <span class="seg-app" data-w="${m.cpu.user}%"></span><span class="seg-wired" data-w="${m.cpu.system}%"></span>
+      </div>
+      <div class="legend num">
+        <span><i class="k-app"></i>Apps ${pctText(m.cpu.user)}</span>
+        <span><i class="k-wired"></i>System ${pctText(m.cpu.system)}</span>
+        <span><i class="k-free"></i>Idle ${pctText(m.cpu.idle)}</span>
+      </div>` : ''}`;
+  }
+  const pctText = (v) => `${Math.round(Math.max(0, v || 0))}%`;
+  const cpuText = (v) => `${(v || 0) >= 10 ? Math.round(v) : (v || 0).toFixed(1)}%`;
+
+  const PRESSURE = {
+    normal: ['Normal', 'Your Mac has enough memory right now. Spare memory is used as cache, which keeps apps fast.'],
+    warning: ['High', 'Memory is getting tight. Quitting apps you are not using helps the most.'],
+    critical: ['Critical', 'Your Mac is short on memory and is using the disk to make up for it. Quit apps you are not using.'],
+  };
+  /** One plain-words suggestion for what would help most right now, or null. */
+  function speedTip(m) {
+    const busy = [...m.apps].sort((a, b) => b.cpu - a.cpu)[0];
+    const proc = [...(m.processes || [])].sort((a, b) => b.cpu - a.cpu)[0];
+    if (busy && busy.cpu >= 60) return `${busy.name} is using a lot of CPU (${cpuText(busy.cpu)}). If you are not using it, quitting it will make your Mac faster and quieter.`;
+    if (proc && proc.cpu >= 60 && proc.note) return `${proc.name} is busy: ${proc.note}`;
+    if (m.pressure !== 'normal' && m.apps[0]) return `${m.apps[0].name} is using the most memory. Quitting it frees the most.`;
+    if (m.swapUsed > 4 * 1024 ** 3) return 'Your Mac has moved a lot of memory to disk. Quitting apps you are not using, or restarting, makes it fast again.';
+    return null;
+  }
+  function renderMemory() {
+    const m = state.memory;
+    if (!m) return emptyState({ title: 'Reading memory and CPU', text: 'One moment.' });
+    if (m.error) return emptyState({ title: 'Performance is not available', text: esc(m.error) });
+    const [label, advice] = PRESSURE[m.pressure] || PRESSURE.normal;
+    const byCpu = state.memSort === 'cpu';
+    const apps = [...m.apps].sort((a, b) => (byCpu ? b.cpu - a.cpu || b.bytes - a.bytes : b.bytes - a.bytes)).slice(0, 10);
+    const procs = [...(m.processes || [])].sort((a, b) => (byCpu ? b.cpu - a.cpu : b.bytes - a.bytes)).slice(0, 6);
+    const tip = speedTip(m);
+    const [n, unit] = (() => { const t = fmtMem(m.used); const i = t.lastIndexOf(' '); return [t.slice(0, i), t.slice(i + 1)]; })();
+    const note = (where) => (state.memNote && state.memNote.where === where
+      ? `<div class="notice ${state.memNote.kind === 'error' ? 'error' : 'info'}"><span>${esc(state.memNote.text)}</span></div>` : '');
+    const rows = apps.length ? apps.map((a) => `
+        <div class="mem-row">
+          <div class="mem-name">${esc(a.name)}${a.processes > 1 ? `<span class="muted"> · ${a.processes} processes</span>` : ''}</div>
+          <div class="mem-cpu num${a.cpu >= 60 ? ' hot' : ''}">${cpuText(a.cpu)}</div>
+          <div class="mem-size num">${fmtMem(a.bytes)}</div>
+          <button class="btn" data-act="quit-app" data-id="${esc(a.id)}" ${state.quitting.has(a.id) ? 'disabled' : ''}>${state.quitting.has(a.id) ? 'Quitting…' : 'Quit'}</button>
+        </div>`).join('')
+      : '<div class="mem-row"><div class="muted">No apps are open.</div></div>';
+    const procRows = procs.map((p) => `
+        <div class="mem-row proc-row">
+          <div class="mem-name">${esc(p.name)}${p.count > 1 ? `<span class="muted"> · ${p.count}</span>` : ''}${p.system ? ' <span class="tag">macOS</span>' : ''}
+            ${p.note ? `<div class="hint">${esc(p.note)}</div>` : ''}</div>
+          <div class="mem-cpu num${p.cpu >= 60 ? ' hot' : ''}">${cpuText(p.cpu)}</div>
+          <div class="mem-size num">${fmtMem(p.bytes)}</div>
+        </div>`).join('');
+    const sortBtn = (k, t) => `<button class="seg-btn${state.memSort === k ? ' on' : ''}" data-act="mem-sort" data-sort="${k}" aria-pressed="${state.memSort === k}">${t}</button>`;
+    return `
+      <section class="ov-hero">
+        <div class="ov-main">
+          <div class="eyebrow"><span class="p-dot p-${m.pressure}"></span>Memory pressure: ${label}</div>
+          <div class="hero-figure">${esc(n)}<small>${esc(unit)} used</small></div>
+          <p class="hero-line">of ${fmtMem(m.total)}. ${esc(advice)}</p>
+        </div>
+        <div class="ov-side">
+          ${m.cpu ? `<div class="ov-stat"><span class="k">CPU in use</span><span class="v num">${pctText(m.cpu.user + m.cpu.system)}</span></div>` : ''}
+          <div class="ov-stat"><span class="k">Cached files</span><span class="v num">${fmtMem(m.cached)}</span></div>
+          <div class="ov-stat"><span class="k">Swap used</span><span class="v num">${fmtMem(m.swapUsed || 0)}</span></div>
+        </div>
+      </section>
+      ${tip ? `<div class="notice info speed-tip"><span>${esc(tip)}</span></div>` : ''}
+      <div class="section-title"><span>Apps</span><span class="seg-toggle" role="group" aria-label="Sort apps">${sortBtn('memory', 'Memory')}${sortBtn('cpu', 'CPU')}</span></div>
+      <div class="cat-list mem-list">
+        <div class="mem-row mem-head muted"><div>Quit works like ⌘Q, so apps can save first</div><div>CPU</div><div>Memory</div><div></div></div>${rows}</div>
+      ${note('apps')}
+      ${procRows ? `
+      <div class="section-title"><span>Background processes</span><span class="muted">Shown for information. Clearspace never stops these.</span></div>
+      <div class="cat-list mem-list">${procRows}</div>` : ''}
+      <div class="section-title"><span>Make your Mac faster</span></div>
+      <div class="set-block">
+        <div class="set-row">
+          <div><div class="label">Apps that open at login</div>
+          <div class="hint">Fewer apps starting with your Mac means a faster start and more free memory. Review them in System Settings and turn off the ones you don't need.</div></div>
+          <button class="btn" data-act="login-items">Open Login Items…</button>
+        </div>
+        <div class="set-row">
+          <div><div class="label">Clear cached memory</div>
+          <div class="hint">Runs macOS's purge command, which empties memory macOS keeps as cache. It asks for your password. The effect is temporary and apps may feel slower for a moment while the cache refills. Quitting apps you don't need frees more.</div></div>
+          <button class="btn" data-act="purge" ${state.purging ? 'disabled' : ''}>${state.purging ? 'Working…' : 'Free up memory…'}</button>
+        </div>
+      </div>
+      ${note('purge')}`;
+  }
+
+  let memTimer = null;
+  async function refreshMemory() {
+    try { state.memory = await api.getMemory(); } catch (e) { state.memory = { error: String(e && e.message || e) }; }
+    if (state.view === 'memory') render();
+  }
+  function watchMemory(on) {
+    clearInterval(memTimer);
+    memTimer = null;
+    if (on) { refreshMemory(); memTimer = setInterval(() => { if (!document.hidden && !sheet.open) refreshMemory(); }, 4000); }
+  }
+
   function renderActionBar() {
     const el = $('#actionbar');
-    if (state.view === 'settings' || state.view === 'overview' || !state.scan || state.scanning) { el.hidden = true; return; }
+    if (state.view === 'settings' || state.view === 'overview' || state.view === 'memory' || !state.scan || state.scanning) { el.hidden = true; return; }
     el.hidden = false;
     const sel = effectiveSelection();
     const size = selSize();
@@ -417,15 +560,17 @@
   function render() {
     renderNav();
     renderCapacity();
-    const titles = { overview: 'Overview', settings: 'Settings' };
+    const titles = { overview: 'Overview', settings: 'Settings', memory: 'Performance' };
     const cat = state.scan && state.scan.categories.find((c) => c.id === state.view);
     $('#toolbar-title').textContent = titles[state.view] || (cat ? cat.name : '');
-    $('#scanned-at').textContent = state.scan && !state.scanning ? `Scanned ${timeAgo(state.scan.scannedAt)}` : '';
+    $('#scanned-at').textContent = state.view !== 'memory' && state.scan && !state.scanning ? `Scanned ${timeAgo(state.scan.scannedAt)}` : '';
     $('#btn-rescan').disabled = state.scanning;
+    $('#btn-rescan').hidden = state.view === 'memory';
     const view = $('#view');
     const keepScroll = view.scrollTop;
     view.innerHTML = state.view === 'overview' ? renderOverview()
       : state.view === 'settings' ? renderSettings()
+      : state.view === 'memory' ? renderMemory()
       : renderCategory(state.view);
     view.scrollTop = keepScroll;
     renderActionBar();
@@ -443,7 +588,7 @@
     render();
     unsubScan = api.onScanProgress((p) => {
       state.progress = p;
-      if (state.view !== 'settings') { $('#view').innerHTML = renderScanning(); applyWidths($('#view')); }
+      if (state.view !== 'settings' && state.view !== 'memory') { $('#view').innerHTML = renderScanning(); applyWidths($('#view')); }
     });
     const res = await api.scan();
     unsubScan && unsubScan();
@@ -461,7 +606,9 @@
   }
 
   function setView(v) {
+    if (v !== state.view) state.memNote = null;
     state.view = v;
+    watchMemory(v === 'memory');
     $('#view').scrollTop = 0;
     render();
     $('#view').focus({ preventScroll: true });
@@ -653,6 +800,34 @@
         break;
       }
       case 'fda': api.openFullDiskAccess(); break;
+      case 'quit-app': {
+        const appId = a.dataset.id;
+        const name = (state.memory && state.memory.apps.find((x) => x.id === appId) || {}).name || 'The app';
+        state.quitting.add(appId);
+        state.memNote = null;
+        render();
+        const r = await api.quitApp(appId);
+        state.quitting.delete(appId);
+        state.memNote = r && r.error ? { where: 'apps', kind: 'error', text: r.error } : { where: 'apps', kind: 'ok', text: `${name} quit.` };
+        await refreshMemory();
+        render();
+        break;
+      }
+      case 'mem-sort': state.memSort = a.dataset.sort === 'cpu' ? 'cpu' : 'memory'; render(); break;
+      case 'login-items': api.openLoginItems(); break;
+      case 'purge': {
+        state.purging = true;
+        state.memNote = null;
+        render();
+        const r = await api.purgeMemory();
+        state.purging = false;
+        if (r && r.after) state.memory = r.after;
+        state.memNote = !r || r.error ? { where: 'purge', kind: 'error', text: (r && r.error) || 'macOS did not run purge.' }
+          : r.cancelled ? null
+          : { where: 'purge', kind: 'ok', text: r.freed != null ? `Freed ${fmtMem(r.freed)} of cached memory. macOS will use it again as you work.` : 'Done.' };
+        render();
+        break;
+      }
       default: break;
     }
   });

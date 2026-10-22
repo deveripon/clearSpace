@@ -81,6 +81,40 @@
   const sub = (k) => (cb) => { listeners[k].push(cb); return () => { listeners[k] = listeners[k].filter((x) => x !== cb); }; };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   let settings = { projectRoots: ['~/Projects'], inactiveDays: 14, scanOnLaunch: window.__MOCK_SCAN_ON_LAUNCH__ !== false };
+
+  // ---- sample memory (a 16 GB Mac under some pressure)
+  const MGB = 1024 ** 3;
+  let memApps = [
+    { id: 'm1', name: 'Google Chrome', bytes: 3.9 * MGB, processes: 24, cpu: 18.4 },
+    { id: 'm2', name: 'Docker', bytes: 2.6 * MGB, processes: 6, cpu: 64.2 },
+    { id: 'm3', name: 'Visual Studio Code', bytes: 1.8 * MGB, processes: 11, cpu: 9.7 },
+    { id: 'm4', name: 'Slack', bytes: 0.92 * MGB, processes: 5, cpu: 2.1 },
+    { id: 'm5', name: 'Figma', bytes: 0.74 * MGB, processes: 4, cpu: 6.3 },
+    { id: 'm6', name: 'Spotify', bytes: 0.41 * MGB, processes: 3, cpu: 0.8 },
+    { id: 'm7', name: 'Notion', bytes: 0.36 * MGB, processes: 3, cpu: 0.4 },
+  ];
+  let memCached = 2.2 * MGB;
+  const cpuNow = () => { const user = 9 + memApps.reduce((t, a) => t + a.cpu, 0) / 10; return { user, system: 7.5, idle: 100 - user - 7.5, cores: 10, load: [3.1, 2.8, 2.6] }; };
+  const memSnapshot = () => {
+    const total = 16 * MGB;
+    const app = memApps.reduce((s, a) => s + a.bytes * 0.8, 0);
+    const wired = 2.4 * MGB;
+    const compressed = Math.max(0.2 * MGB, app * 0.12);
+    const used = Math.min(total, app + wired + compressed);
+    const cached = Math.min(memCached, total - used);
+    const pressure = used / total > 0.85 ? 'warning' : 'normal';
+    return { total, used, app, wired, compressed, cached, free: Math.max(0, total - used - cached), swapUsed: pressure === 'warning' ? 1.3 * MGB : 0.2 * MGB, swapTotal: 2 * MGB, pressure,
+      cpu: cpuNow(),
+      processes: [
+        { name: 'mds_stores', bytes: 0.31 * MGB, cpu: 21.5, count: 1, system: true, note: 'Spotlight is indexing files. Busy for a while after big changes, then it settles.' },
+        { name: 'WindowServer', bytes: 0.52 * MGB, cpu: 8.9, count: 1, system: true, note: 'Draws everything on screen. Busier with many windows, displays or animations.' },
+        { name: 'node', bytes: 0.64 * MGB, cpu: 4.2, count: 3, system: false, note: 'A developer tool or server started from a terminal or editor.' },
+        { name: 'kernel_task', bytes: 0.12 * MGB, cpu: 3.6, count: 1, system: true, note: 'macOS itself. High CPU here often means it is slowing things down to keep your Mac cool.' },
+        { name: 'cloudd', bytes: 0.09 * MGB, cpu: 1.1, count: 1, system: true, note: 'iCloud is syncing files.' },
+      ],
+      apps: memApps.map((a) => ({ ...a })), at: Date.now() };
+  };
+
   window.api = {
     getSettings: async () => settings,
     saveSettings: async (s) => (settings = { ...settings, ...s }),
@@ -88,7 +122,11 @@
     getDisk: async () => disk,
     pickFolder: async () => '~/Projects',
     reveal: async () => {},
+    getMemory: async () => memSnapshot(),
+    quitApp: async (id) => { await new Promise((r) => setTimeout(r, 700)); memApps = memApps.filter((a) => a.id !== id); return { ok: true }; },
+    purgeMemory: async () => { await new Promise((r) => setTimeout(r, 900)); const freed = memCached * 0.9; memCached -= freed; return { ok: true, freed, after: memSnapshot() }; },
     openFullDiskAccess: async () => {},
+    openLoginItems: async () => {},
     onScanProgress: sub('scan'), onCleanProgress: sub('clean'), onMenu: sub('menu'),
     scan: async () => {
       const delay = window.__MOCK_SCAN_DELAY__ ?? 300;
