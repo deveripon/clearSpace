@@ -13,8 +13,11 @@ fi
 
 ARCH="$(uname -m)"; [ "$ARCH" = "x86_64" ] && ARCH="x64"
 
-step "Downloading build tools (one time, removed again at the end)"
-npm install --no-audit --no-fund --loglevel=error
+step "Downloading build tools (removed again at the end)"
+echo "    This downloads about 150 MB, including Electron from GitHub. On a slow connection it"
+echo "    can take several minutes. A progress bar appears if the Electron download is slow."
+# --foreground-scripts shows Electron's own download progress instead of a silent spinner.
+npm install --no-audit --no-fund --loglevel=error --foreground-scripts
 
 step "Building Clearspace.app for $ARCH"
 npx electron-builder --mac --dir "--$ARCH" >/dev/null
