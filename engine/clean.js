@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
 const { HOME, run, git, diskInfo, expandHome, readdirSafe, trackedState, findNestedGit } = require('./util');
-const { specById, DEV_CACHES } = require('./catalog');
+const { specById, DEV_CACHES, APP_CACHE_KEEP } = require('./catalog');
 const { assessWorktree, backupHistory } = require('./worktree');
 const kinds = require('./kinds');
 
@@ -163,9 +163,12 @@ async function rmrf(p, st) {
   await fsp.rm(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
 }
 
-/** Delete the contents of `p` but keep `p`. Returns the number of entries that could not be removed. */
-async function emptyDir(p, st) {
-  const entries = await readdirSafe(p);
+/**
+ * Delete the contents of `p` but keep `p`, and keep any entry named in `keep`.
+ * Returns the number of entries that could not be removed.
+ */
+async function emptyDir(p, st, keep) {
+  const entries = (await readdirSafe(p)).filter((e) => !(keep && keep.has(e.name)));
   if (!(await stillSame(p, st))) throw new Error('The folder changed after it was checked. Nothing was removed. Scan again.');
   let failed = 0;
   let firstErr = null;
@@ -231,7 +234,9 @@ async function clean(items, deps, onProgress) {
           case 'delete': await rmrf(p, st); break;
           case 'empty':
           case 'empty-trash': {
-            const r = await emptyDir(p, st);
+            // App caches: never touch an app's pending update (see APP_CACHE_KEEP).
+            const keep = it.category === 'apps' && path.dirname(p) === CACHES ? APP_CACHE_KEEP : null;
+            const r = await emptyDir(p, st, keep);
             if (r.failed) {
               partial = it.action === 'empty-trash' && r.failed === r.total
                 ? 'macOS did not allow emptying the Trash. Give Clearspace Full Disk Access in System Settings.'
