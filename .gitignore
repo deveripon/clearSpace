@@ -3,3 +3,4 @@ dist/
 shots/
 .DS_Store
 *.log
+config.bat

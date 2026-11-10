@@ -24,7 +24,7 @@
     "developer-tools"
   ],
   "scripts": {
-    "start": "electron .",
+    "start": "node init && electron .",
     "dist": "electron-builder --mac --dir",
     "test": "bash test/make-fakehome.sh /tmp/clearspace-fakehome && HOME=/tmp/clearspace-fakehome node --test test/engine.test.js && HOME=/tmp/clearspace-fakehome-safety node --test test/safety.test.js && node --test test/memory.test.js"
   },
@@ -57,7 +57,7 @@
       "darkModeSupport": true,
       "extendInfo": {
         "NSDownloadsFolderUsageDescription": "Clearspace lists large files in Downloads so you can decide whether to remove them.",
-        "NSAppleEventsUsageDescription": "Clearspace asks apps you choose to quit, the same way ⌘Q does, so they can save your work first."
+        "NSAppleEventsUsageDescription": "Clearspace asks apps you choose to quit, the same way \u2318Q does, so they can save your work first."
       }
     }
   }
