@@ -292,6 +292,13 @@ const APP_CACHE_WARNINGS = [
   [/spotify/i, 'May hold music you downloaded for offline listening.'],
   [/adobe/i, 'May hold Adobe cloud-document and font caches.'],
 ];
+/**
+ * Folders inside an app cache that are never removed when the cache is emptied.
+ * Sparkle (the updater used by ChatGPT, Codex and other Mac apps) keeps the next version of the app here,
+ * fully unpacked, and moves it into /Applications when the app quits or the Mac shuts down.
+ * Emptying it mid-update makes Sparkle install whatever is left, so the app becomes "damaged or incomplete".
+ */
+const APP_CACHE_KEEP = new Set(['org.sparkle-project.Sparkle']);
 const APP_CACHE_UNKNOWN = 'Not on Clearspace\'s list of known-safe caches. Some apps keep downloads, offline data or history here. Check what this app is before cleaning.';
 
 /** Library/Caches folders we never list (system-managed or claimed elsewhere). */
@@ -305,4 +312,4 @@ const APP_CACHE_SKIP = [
 
 const INSTALLER_EXT = /\.(dmg|pkg|iso|xip|zip|tar|tgz|gz|rar|7z)$/i;
 
-module.exports = { CATEGORIES, PROJECT_DIRS, PROJECT_DIR_NAMES, COVERAGE_FILES, specById, specCandidates, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT, SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN };
+module.exports = { CATEGORIES, PROJECT_DIRS, PROJECT_DIR_NAMES, COVERAGE_FILES, specById, specCandidates, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT, SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN, APP_CACHE_KEEP };

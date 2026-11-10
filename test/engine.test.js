@@ -49,6 +49,10 @@ test('scan finds the right items', async () => {
 
   // caches
   assert.ok(byTitle('apps', 'Google Chrome'));
+  const gpt = byTitle('apps', 'ChatGPT');
+  assert.ok(gpt && gpt.recommended, 'ChatGPT cache listed');
+  assert.ok(gpt.size < 7 * 1048576, `pending Sparkle update not counted as space to free (${gpt.size})`);
+  assert.ok(!('keptPaths' in gpt), 'internal field not sent to the UI');
   assert.ok(!result.items.some((i) => /com\.apple/.test(i.subtitle)), 'Apple caches never listed');
   assert.ok(!result.items.some((i) => i.title === 'tiny'), 'tiny caches hidden');
   assert.ok(byTitle('pkg', 'npm download cache'));
@@ -191,6 +195,9 @@ test('clean recommended items, keep everything else', async () => {
   assert.ok(fs.existsSync(path.join(HOME, 'Library', 'Caches', 'com.google.Chrome')), 'cache folder itself kept');
   assert.strictEqual(fs.readdirSync(path.join(HOME, 'Library', 'Caches', 'com.google.Chrome')).length, 0, 'cache emptied');
   assert.deepStrictEqual(trashed, [path.join(P, 'repo copy')]);
+  const gptCache = path.join(HOME, 'Library', 'Caches', 'com.openai.chat');
+  assert.deepStrictEqual(fs.readdirSync(gptCache), ['org.sparkle-project.Sparkle'], 'ChatGPT cache emptied except its pending update');
+  assert.ok(fs.existsSync(path.join(gptCache, 'org.sparkle-project.Sparkle/Installation/abc/ChatGPT.app/Contents/Info.plist')), 'pending update left complete');
 
   // Kept
   assert.ok(fs.existsSync(path.join(P, 'projA', 'src', 'a.ts')), 'source kept');

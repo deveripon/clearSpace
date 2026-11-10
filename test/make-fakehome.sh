@@ -22,6 +22,9 @@ git worktree add -q .claude/worktrees/agent-dirty -b wt-dirty; echo dirty > .cla
 cd $P; cp -a repo "repo copy"
 ln -s /etc $P/linkdir; ln -s $P/projA/src $P/projB/node_modules_link
 mk $T/Library/Caches/com.google.Chrome/c.bin 6; mk $T/Library/Caches/com.apple.Safari/s.bin 6; mk $T/Library/Caches/Yarn/y.bin 2; mk $T/Library/Caches/tiny/t.bin 1
+# ChatGPT: cache files plus a Sparkle update waiting to be installed on quit (must never be removed)
+SPK=$T/Library/Caches/com.openai.chat/org.sparkle-project.Sparkle
+mk $T/Library/Caches/com.openai.chat/c.bin 6; mk $SPK/Installation/abc/ChatGPT.app/Contents/Resources/app.bin 8; echo x > $SPK/Installation/abc/ChatGPT.app/Contents/Info.plist
 mk $T/Library/Logs/l.log 6; mk $T/.npm/_cacache/c.bin 2
 mk $T/Downloads/big.dmg 60; mk $T/Downloads/note.txt 1; mkdir -p $T/.Trash
 # ---- edge cases from the safety review

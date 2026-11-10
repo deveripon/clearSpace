@@ -7,7 +7,7 @@ const {
 } = require('./util');
 const {
   CATEGORIES, PROJECT_DIR_NAMES, specCandidates, DEV_CACHES, APP_CACHE_TEXT, APP_CACHE_SKIP, INSTALLER_EXT,
-  SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN,
+  SAFE_APP_CACHES, APP_CACHE_WARNINGS, APP_CACHE_UNKNOWN, APP_CACHE_KEEP,
 } = require('./catalog');
 const { assessWorktree } = require('./worktree');
 const kinds = require('./kinds');
@@ -480,6 +480,8 @@ async function buildItems(found, settings, onProgress) {
       recommended: safe,
       tags: [],
       minSize: 5 * MB,
+      // Pending app updates stay when this cache is emptied, so they are not counted as space to free.
+      keptPaths: [...APP_CACHE_KEEP].map((k) => path.join(p, k)),
       ...APP_CACHE_TEXT,
       ...(safe ? {} : { lose: warn ? warn[1] : APP_CACHE_UNKNOWN }),
     });
@@ -672,6 +674,11 @@ async function scan(settings, onProgress) {
       it.size = sizes.some((s) => s === null) && sizes.every((s) => s === null)
         ? null
         : sizes.reduce((a, s) => a + (s || 0), 0);
+      if (it.size !== null && it.keptPaths) {
+        for (const k of it.keptPaths) {
+          if (await isRealDir(k)) it.size = Math.max(0, it.size - ((await diskUsage(k)) || 0));
+        }
+      }
     }
     done++;
     onProgress && onProgress({ phase: 'measure', detail: it.title, done, total });
@@ -687,7 +694,7 @@ async function scan(settings, onProgress) {
     if (it.size === null) return it.risk === 'locked';
     return it.size >= (it.minSize || min[it.category] || MB);
   });
-  for (const it of items) { delete it.knownSize; delete it.minSize; }
+  for (const it of items) { delete it.knownSize; delete it.minSize; delete it.keptPaths; }
 
   items.sort((a, b) => (b.size || 0) - (a.size || 0));
   const categories = CATEGORIES.map((c) => {
